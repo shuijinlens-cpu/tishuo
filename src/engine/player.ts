@@ -83,7 +83,7 @@ export class Player {
     if (settings.ttsEngine === 'browser') waitForVoices().catch(() => {});
     const vv = resolveVoice(settings);
     if (this.narrator) this.narrator.setVoice(vv.preset, vv.pitchShift);
-    else this.narrator = new Narrator({ preset: vv.preset, speed: settings.speed, pitchShift: vv.pitchShift });
+    else this.narrator = new Narrator({ preset: vv.preset, speed: settings.speed, pitchShift: vv.pitchShift, prosody: settings.prosody });
   }
 
   private renderOpts(): RenderOpts {
@@ -178,7 +178,7 @@ export class Player {
     // 用断句 + 韵律的朗读器，句间留白、问句升调，避免机器连读
     if (!this.narrator) {
       const vv = resolveVoice(settings);
-      this.narrator = new Narrator({ preset: vv.preset, speed: settings.speed, pitchShift: vv.pitchShift });
+      this.narrator = new Narrator({ preset: vv.preset, speed: settings.speed, pitchShift: vv.pitchShift, prosody: settings.prosody });
     }
     this.narrator.speak(it.scene.narration);
   }

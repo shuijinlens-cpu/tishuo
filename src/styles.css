@@ -57,6 +57,8 @@ body {
 }
 .mode-pill.demo { color: #b7791f; background: #fffaf0; border-color: #f6e05e; }
 .mode-pill.live { color: #087f5b; background: #ebfbf5; border-color: #a7f3d0; }
+button.mode-pill { cursor: pointer; font-family: inherit; }
+button.mode-pill:hover { filter: brightness(0.97); }
 
 /* ---------------- 主体 ---------------- */
 main { flex: 1; width: 100%; max-width: 1360px; margin: 0 auto; padding: 26px 28px 40px; }

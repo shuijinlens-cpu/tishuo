@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { PROVIDERS, isConfigured, chat } from '../lib/ai';
+import { PROVIDERS, isConfigured, chat, detectProvider } from '../lib/ai';
 import { VOICE_PRESETS, analyzeRecording, describeBestVoice, previewVoice, waitForVoices } from '../lib/voice';
 import { applyPreset } from '../lib/store';
 import type { Settings, VoiceProfile } from '../lib/types';
@@ -9,6 +9,13 @@ interface Props {
   onChange: (s: Settings) => void;
   onClose: () => void;
 }
+
+const PROSODY_LEVELS: [string, number][] = [
+  ['平稳', 0.15],
+  ['自然', 0.5],
+  ['抑扬顿挫', 0.85],
+  ['戏剧化', 1],
+];
 
 export function SettingsModal({ settings, onChange, onClose }: Props) {
   const [s, setS] = useState<Settings>(settings);
@@ -22,12 +29,21 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
   const chunksRef = useRef<Blob[]>([]);
   const preset = PROVIDERS.find((p) => p.id === s.providerId) || PROVIDERS[0];
 
-  const set = (patch: Partial<Settings>) => setS((prev) => ({ ...prev, ...patch }));
-
-  const save = () => {
-    onChange(s);
-    onClose();
+  /** 改任何一项都立刻写回 App → localStorage，不再需要点"保存" */
+  const set = (patch: Partial<Settings>) => {
+    setS((prev) => {
+      const next = { ...prev, ...patch };
+      onChange(next);
+      return next;
+    });
   };
+  /** 整份替换（如切换服务商） */
+  const replace = (next: Settings) => {
+    setS(next);
+    onChange(next);
+  };
+
+  const save = () => onClose();
 
   const test = async () => {
     setTesting(true);
@@ -48,7 +64,7 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
     setTrying(id);
     await waitForVoices();
     setVoiceNote(`正在用「${describeBestVoice(vp)}」试听`);
-    await previewVoice(vp, s.speed, s.pitchShift);
+    await previewVoice(vp, s.speed, s.pitchShift, s.prosody);
     setTimeout(() => setTrying(''), 9000);
   };
 
@@ -76,7 +92,7 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
             `音域 ${profile.f0Low}~${profile.f0High} Hz，自动匹配「${VOICE_PRESETS.find((v) => v.id === profile.presetId)?.name}」并校准音高 ${profile.pitchScale.toFixed(2)}×`,
           );
           await waitForVoices();
-          await previewVoice(VOICE_PRESETS.find((v) => v.id === profile.presetId)!, s.speed, profile.pitchScale);
+          await previewVoice(VOICE_PRESETS.find((v) => v.id === profile.presetId)!, s.speed, profile.pitchScale, s.prosody);
         } catch (e: any) {
           setRecErr(e?.message || '分析失败，请重试');
         } finally {
@@ -217,6 +233,22 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
               要导出带人声的视频，用云端人声（CosyVoice / gpt-4o-mini-tts 接近真人）。
               开了「我的声音」后，云端配音会自动带上你录音里分析出的音色特征描述。
             </p>
+            {preset.tts && s.ttsEngine !== 'api' && (
+              <button
+                className="btn ghost sm mt8"
+                onClick={() =>
+                  replace({
+                    ...s,
+                    ttsEngine: 'api',
+                    ttsModel: preset.ttsModel || s.ttsModel,
+                    ttsVoice: preset.ttsVoice || s.ttsVoice,
+                    ttsProtocol: preset.ttsProtocol,
+                  })
+                }
+              >
+                ✨ 一键开启云端人声（{preset.ttsModel}）
+              </button>
+            )}
           </section>
 
           {s.ttsEngine === 'api' && (
@@ -278,13 +310,35 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
           <section>
             <label className="field">
               <span>AI 服务商（解题 / 写分镜）</span>
-              <select value={s.providerId} onChange={(e) => setS(applyPreset(s, e.target.value))}>
+              <select value={s.providerId} onChange={(e) => replace(applyPreset(s, e.target.value))}>
                 {PROVIDERS.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </select>
             </label>
             <p className="hint">{preset.note}</p>
+            {(s.apiKey || s.baseUrl) && (
+              <button
+                className="btn ghost sm mt8"
+                onClick={() => {
+                  const p = detectProvider(s.apiKey, s.baseUrl);
+                  if (!p) {
+                    setTestMsg('没认出这个 Key 的格式，手动选一下服务商就行（只选一次，之后自动记住）');
+                    return;
+                  }
+                  replace(applyPreset(s, p.id));
+                  setTestMsg(`已按 Key 识别为「${p.name}」，接口地址和模型名都填好了`);
+                }}
+              >
+                🔍 按 Key 自动识别服务商
+              </button>
+            )}
+            {s.providerId !== 'demo' && (s.textModel || s.visionModel) && (
+              <p className="hint">
+                当前生效：解题 / 写分镜用 <b>{s.textModel || '（未填）'}</b>，拍照识题用 <b>{s.visionModel || '（未填）'}</b>。
+                设置即时保存，下次打开自动生效，不用再选。
+              </p>
+            )}
           </section>
 
           {s.providerId === 'demo' && (
@@ -368,6 +422,20 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
                 ))}
               </div>
             </div>
+            <div className="row between mt12">
+              <span className="label">韵律起伏</span>
+              <div className="seg">
+                {PROSODY_LEVELS.map(([label, v]) => (
+                  <button key={label} className={Math.abs((s.prosody ?? 0.6) - v) < 0.02 ? 'on' : ''} onClick={() => set({ prosody: v })}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="hint">
+              控制语气的"抑扬顿挫"：问句语调上扬、结论放慢加重、算式和数字咬准、短句干脆长句放缓、句间有换气停顿。
+              本机音色和云端人声（含导出视频）都会生效。
+            </p>
             <label className="check mt12">
               <input type="checkbox" checked={s.captions} onChange={(e) => set({ captions: e.target.checked })} />
               <span>画面底部显示字幕</span>
@@ -385,8 +453,8 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
         </div>
 
         <div className="modal-foot">
-          <button className="btn ghost" onClick={onClose}>取消</button>
-          <button className="btn primary" onClick={save}>保存设置</button>
+          <span className="tiny">所有修改已自动保存到本机</span>
+          <button className="btn primary" onClick={save}>完成</button>
         </div>
       </div>
     </div>

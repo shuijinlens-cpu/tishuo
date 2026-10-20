@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, PROVIDERS } from './ai';
+import { DEFAULT_SETTINGS, PROVIDERS, detectProvider } from './ai';
 import type { Settings } from './types';
 
 const KEY = 'tishuo.settings.v1';
@@ -35,8 +35,25 @@ export function applyPreset(s: Settings, providerId: string): Settings {
     ttsModel: p.ttsModel || s.ttsModel,
     ttsVoice: p.ttsVoice || s.ttsVoice,
     ttsProtocol: p.ttsProtocol || s.ttsProtocol,
-    ttsEngine: p.tts ? (s.ttsEngine === 'none' ? 'api' : s.ttsEngine) : 'browser',
+    // 服务商自带人声（百炼 / OpenAI）就默认切成云端人声；不带的（智谱）退回本机音色
+    ttsEngine: p.tts ? 'api' : s.ttsEngine === 'api' ? 'browser' : s.ttsEngine,
   };
+}
+
+/**
+ * 用户粘了 Key 但没选服务商（或信息不全）时，按 Key 格式自动补全。
+ * 只在"确实缺东西"时动手，已配好的设置绝不被覆盖——目的就是让用户只配一次。
+ */
+export function autoConfigFromKey(s: Settings): Settings {
+  const key = (s.apiKey || '').trim();
+  if (!key) return s;
+  const p = detectProvider(key, s.baseUrl);
+  if (!p) return s;
+  const missingBase = !s.baseUrl;
+  const missingModel = !s.textModel || !s.visionModel;
+  const notPicked = s.providerId === 'demo' || s.providerId === 'custom';
+  if (!missingBase && !missingModel && !notPicked) return s;
+  return applyPreset(s, p.id);
 }
 
 /** 压缩图片，减少上传体积（识别效果不受影响） */

@@ -305,6 +305,8 @@ export interface Chunk {
   volume: number;
   /** 是否是需要加重的关键词句 */
   emphasis?: boolean;
+  /** 这一句的内容类型，用于云端 TTS 生成对应的语气指令 */
+  kind?: 'question' | 'exclaim' | 'conclusion' | 'keyfact' | 'enum' | 'plain';
 }
 
 const ENDERS = /([。！？!?…]+|\.(?=\s|$))/;
@@ -319,17 +321,37 @@ function jitter(seed: string, salt: number): number {
   return ((h >>> 0) % 1000) / 1000 - 0.5; // -0.5 ~ 0.5
 }
 
+/** 判断一句是不是"要划重点"的内容：算式、数字、结论词 */
+function isKeyFact(t: string): boolean {
+  return (
+    /[=≈≠<>≤≥]/.test(t) ||
+    /\d/.test(t) ||
+    /答案|所以|因此|综上|结论|关键|注意|重点|由此|即|则|第一步|第二步|第三步|千万|一定/.test(t)
+  );
+}
+
+export interface ProsodyOpts {
+  /** 韵律强度 0~1：0 = 近乎匀速，1 = 大幅起伏 */
+  prosody?: number;
+}
+
+function clampP(p?: number): number {
+  const v = p == null ? 0.6 : p;
+  return Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0.6));
+}
+
 /**
- * 把口播稿切成"呼吸单位"：
- * - 长句按逗号二次切分，避免一口气念 50 字
- * - 句号/问号后留长一点的空白，逗号短一些
- * - 问句升调、感叹句略降调加力、冒号后的列举稍慢
- * - 每句加极小的音高/语速抖动，避免"每句一个调"的机器感
- * - **两个星号** 包裹的片段会加重、放慢
+ * 把口播稿切成"呼吸单位"，并给每一句算出语气参数：
+ * - 问句上扬、感叹句用力、结论句放缓下沉
+ * - **两个星号** 或算式/数字句 → 放慢 + 加重（"重点说慢"是真人讲课最明显的特征）
+ * - 短句（≤12 字）稍微冲，长句（≥26 字）放缓 —— 这就是"时而缓时而急促"
+ * - 句间停顿长度随韵律强度放大，长句额外多留一口气
+ * - 每句加极小抖动，避免"每句一个调"的机器感
  */
-export function splitForSpeech(narration: string): Chunk[] {
+export function splitForSpeech(narration: string, opts: ProsodyOpts = {}): Chunk[] {
   const raw = (narration || '').trim();
   if (!raw) return [];
+  const P = clampP(opts.prosody);
   const chunks: Chunk[] = [];
 
   const sentences = raw.split(ENDERS).reduce<string[]>((acc, part, i) => {
@@ -357,21 +379,45 @@ export function splitForSpeech(narration: string): Chunk[] {
     const isStop = /[。…]\s*$/.test(piece);
     const isComma = /[，,；;、]\s*$/.test(piece);
     const isColon = /[：:]\s*$/.test(piece);
+    const isEnum = /[、；]/.test(piece) || /首先|其次|然后|最后|第一|第二|第三/.test(piece);
+    const isConclusion = /^(所以|因此|综上|答案|结论|即|则|可见|于是|换句话说)/.test(piece);
+    const keyFact = isKeyFact(piece);
 
-    // 句子越长，停顿越接近真人换气
-    const lenPause = Math.min(0.12, piece.length * 0.004);
+    // 句子越长，停顿越接近真人换气；停顿幅度随韵律强度放大
+    const lenPause = Math.min(0.12, piece.length * 0.004) * (0.6 + 0.8 * P);
     const baseGap = isStop ? 0.34 : isQuestion ? 0.32 : isExclaim ? 0.26 : isColon ? 0.22 : isComma ? 0.15 : 0.1;
+    const gap = baseGap * (0.65 + 0.6 * P) + lenPause;
 
-    const rateJ = jitter(piece, si) * 0.05;
-    const pitchJ = jitter(piece, si + 97) * 0.045;
+    const rateJ = jitter(piece, si) * 0.05 * P;
+    const pitchJ = jitter(piece, si + 97) * 0.045 * P;
+
+    // 短句冲、长句缓；列举和结论放慢；算式和数字咬准
+    const lenRate = piece.length <= 12 ? 0.07 * P : piece.length >= 26 ? -0.05 * P : 0;
+    const slow = (isEnum ? -0.03 : 0) + (isConclusion || isStop ? -0.04 : 0) + (keyFact ? -0.05 : 0);
+    const rateDelta = lenRate + slow * (0.5 + P) + rateJ;
+    const pitchDelta =
+      (isQuestion ? 0.1 : isExclaim ? 0.03 : isConclusion ? -0.05 : 0) * (0.4 + P) + pitchJ;
+
+    const kind: Chunk['kind'] = isQuestion
+      ? 'question'
+      : isExclaim
+        ? 'exclaim'
+        : isConclusion
+          ? 'conclusion'
+          : keyFact
+            ? 'keyfact'
+            : isEnum
+              ? 'enum'
+              : 'plain';
 
     chunks.push({
       text: piece,
-      gap: baseGap + lenPause,
-      pitchDelta: (isQuestion ? 0.09 : isExclaim ? -0.02 : 0) + pitchJ,
-      rateDelta: (isColon ? -0.04 : 0) + (emphasis ? -0.08 : 0) + rateJ,
-      volume: emphasis ? 1 : 0.96,
+      gap,
+      pitchDelta,
+      rateDelta,
+      volume: emphasis || keyFact ? 1 : 0.96,
       emphasis,
+      kind,
     });
   });
 
@@ -392,6 +438,8 @@ export interface NarratorOptions {
   speed: number;
   /** 音高微调（1 = 不动）；用于贴合"我的声音" */
   pitchShift?: number;
+  /** 韵律强度 0~1，见 splitForSpeech */
+  prosody?: number;
   onEnd?: () => void;
 }
 
@@ -424,8 +472,8 @@ export class Narrator {
 
   speak(text: string) {
     this.cancel();
-    const { preset, speed, pitchShift = 1 } = this.opts;
-    this.queue = splitForSpeech(text);
+    const { preset, speed, pitchShift = 1, prosody } = this.opts;
+    this.queue = splitForSpeech(text, { prosody });
     if (!this.queue.length) return;
     this.idx = 0;
     this.cancelled = false;
@@ -488,9 +536,9 @@ export class Narrator {
 }
 
 /** 试听：设置页里点一下就能听出差别 */
-export async function previewVoice(preset: VoicePreset, speed = 1, pitchShift = 1) {
+export async function previewVoice(preset: VoicePreset, speed = 1, pitchShift = 1, prosody = 0.6) {
   await waitForVoices();
-  const n = new Narrator({ preset, speed, pitchShift });
+  const n = new Narrator({ preset, speed, pitchShift, prosody });
   n.speak(
     '这就是讲解时的人声效果。注意听：句号这里会停一下，**疑问句**呢，语调会往上走？重点的地方，我会说得慢一点，也重一点。',
   );
@@ -606,6 +654,36 @@ function joinUrl(base: string, path: string) {
   return `${(base || '').replace(/\/+$/, '')}${path}`;
 }
 
+export interface TtsOpts {
+  /** 音色 ID / 名字 */
+  voice?: string;
+  /** 语速倍率（1 = 设置里的基准语速） */
+  speed?: number;
+  /** 语气指令（支持 instructions 的模型会照着演） */
+  instructions?: string;
+  /** 覆盖音色风格描述 */
+  style?: string;
+}
+
+/**
+ * 把一句话的语气要求翻译成云端 TTS 能听懂的"导演指令"。
+ * 支持 instructions 的模型（gpt-4o-mini-tts、CosyVoice）会据此调整：
+ * 问句上扬、结论沉稳、数字放慢、句间换气停顿——这就是"抑扬顿挫"的来源。
+ */
+export function prosodyInstructions(text: string, style: string, prosody = 0.6): string {
+  const P = clampP(prosody);
+  const dirs: string[] = [];
+  if (/[？?]/.test(text)) dirs.push('问句语调上扬，像真的在向学生提问');
+  if (/[！!]/.test(text)) dirs.push('感叹句情绪饱满但不要喊');
+  if (/所以|因此|综上|答案|结论|即|则/.test(text)) dirs.push('结论句放慢加重，字字清楚，句尾沉稳收起');
+  if (/[=≈≠<>≤≥]|\d/.test(text)) dirs.push('念到算式和数字时放慢语速、咬准每一个数');
+  if (P >= 0.7) dirs.push('句子之间保留自然的换气停顿，切忌匀速连读');
+  if (P >= 0.7) dirs.push('整体张弛有度：该干脆的地方干脆，该强调的地方放慢加重');
+  if (P <= 0.3) dirs.push('保持平稳匀速即可，不要大幅起伏');
+  dirs.push('像真人老师面对面讲课，不要朗读腔');
+  return [style.trim(), ...dirs].filter(Boolean).join('；');
+}
+
 /**
  * 云端 TTS。两种协议：
  * - openai：POST /audio/speech（OpenAI、以及各家兼容网关）
@@ -615,12 +693,15 @@ function joinUrl(base: string, path: string) {
 export async function cloudTts(
   s: Settings,
   text: string,
-  voiceName?: string,
+  opts: string | TtsOpts = {},
 ): Promise<ArrayBuffer> {
+  const o: TtsOpts = typeof opts === 'string' ? { voice: opts } : opts;
   const preset = getPreset(s.voicePreset);
-  const voice = voiceName || s.ttsVoice || preset.cloudVoice;
+  const voice = o.voice || s.ttsVoice || preset.cloudVoice;
   const profileStyle = s.voiceProfile ? styleFromProfile(s.voiceProfile) : '';
-  const style = (s.voiceStyle || '').trim() || profileStyle || preset.style;
+  const baseStyle = o.style || (s.voiceStyle || '').trim() || profileStyle || preset.style;
+  const speed = o.speed != null ? Math.max(0.5, Math.min(2, o.speed)) : s.speed;
+  const instructions = o.instructions || prosodyInstructions(text, baseStyle, s.prosody);
   if (!s.ttsModel) throw new Error('当前服务商没配 TTS 模型：去设置里填一个（如 qwen-tts / gpt-4o-mini-tts）');
 
   if (s.ttsProtocol === 'dashscope') {
@@ -630,8 +711,8 @@ export async function cloudTts(
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${s.apiKey}` },
       body: JSON.stringify({
         model: s.ttsModel,
-        input: { text, voice, ...(style ? { instructions: style } : {}) },
-        parameters: { rate: s.speed },
+        input: { text, voice, instructions },
+        parameters: { rate: speed },
       }),
     });
     if (!res.ok) {
@@ -655,8 +736,8 @@ export async function cloudTts(
       input: text,
       voice,
       response_format: 'mp3',
-      speed: s.speed,
-      ...(style ? { instructions: style } : {}),
+      speed,
+      instructions,
     }),
   });
   if (!res.ok) {
@@ -664,4 +745,79 @@ export async function cloudTts(
     throw new Error(`配音接口 ${res.status}：${t.slice(0, 200)}`);
   }
   return await res.arrayBuffer();
+}
+
+/**
+ * 带韵律地合成整段口播：
+ * 按"呼吸单位"逐句送 TTS，每句用自己的语速（该冲冲、该缓缓）和语气指令，
+ * 句间按停顿参数插入静音，最后拼成一条 AudioBuffer。
+ * 这样导出的视频里才是真正有起伏的人声，而不是一整段匀速朗读。
+ *
+ * 某一句失败会自动退回"整段合成一次"，再失败就抛错（由调用方决定是否用本机音色兜底）。
+ */
+export async function synthesizeNarration(
+  s: Settings,
+  narration: string,
+  ctx: BaseAudioContext,
+  onProgress?: (done: number, total: number) => void,
+): Promise<AudioBuffer> {
+  const text = (narration || '').trim();
+  if (!text) throw new Error('这一屏没有解说词');
+  const chunks = splitForSpeech(text, { prosody: s.prosody }).filter((c) => c.text.trim());
+  if (!chunks.length) throw new Error('这一屏没有解说词');
+
+  const preset = getPreset(s.voicePreset);
+  const profileStyle = s.voiceProfile ? styleFromProfile(s.voiceProfile) : '';
+  const baseStyle = (s.voiceStyle || '').trim() || profileStyle || preset.style;
+
+  // 只有一句（或韵律关到最小）时没必要逐句请求
+  const pieces: { buf: ArrayBuffer; gap: number }[] = [];
+  const simple = chunks.length === 1 || clampP(s.prosody) <= 0.05;
+  const jobs = simple ? [{ ...chunks[0], rateDelta: 0, text }] : chunks;
+
+  try {
+    for (let i = 0; i < jobs.length; i++) {
+      const c = jobs[i];
+      onProgress?.(i, jobs.length);
+      const speed = Math.max(0.5, Math.min(2, s.speed * (1 + (c.rateDelta || 0))));
+      const buf = await cloudTts(s, c.text, {
+        speed,
+        instructions: prosodyInstructions(c.text, baseStyle, s.prosody),
+      });
+      pieces.push({ buf, gap: c.gap || 0.12 });
+    }
+    onProgress?.(jobs.length, jobs.length);
+  } catch (e) {
+    // 逐句失败（多半是接口不支持 instructions / 太慢）：退回整段一次
+    if (pieces.length === 0 && !simple) {
+      const buf = await cloudTts(s, text, { speed: s.speed, instructions: prosodyInstructions(text, baseStyle, s.prosody) });
+      pieces.push({ buf, gap: 0 });
+    } else {
+      throw e;
+    }
+  }
+
+  // 拼成一条：逐段解码，按 句时长 + 停顿 排到时间轴上
+  const decoded = await Promise.all(pieces.map((p) => ctx.decodeAudioData(p.buf.slice(0))));
+  const sr = ctx.sampleRate;
+  let total = 0;
+  for (const d of decoded) total += d.duration;
+  for (const p of pieces) total += p.gap;
+  const frames = Math.ceil(total * sr);
+  const out = ctx.createBuffer(2, Math.max(1, frames), sr);
+  for (let ch = 0; ch < 2; ch++) {
+    const dst = out.getChannelData(ch);
+    let at = 0;
+    decoded.forEach((d, i) => {
+      const src = ch === 0 ? d.getChannelData(0) : d.numberOfChannels > 1 ? d.getChannelData(1) : d.getChannelData(0);
+      // 采样率不一致时做线性重采样
+      const ratio = d.sampleRate / sr;
+      const len = Math.floor(src.length / ratio);
+      for (let k = 0; k < len && at + k < dst.length; k++) {
+        dst[at + k] = src[Math.floor(k * ratio)] ?? 0;
+      }
+      at += len + Math.floor((pieces[i].gap || 0) * sr);
+    });
+  }
+  return out;
 }

@@ -211,6 +211,8 @@ export interface Settings {
   theme: 'night' | 'light';
   ratio: '16:9' | '9:16';
   speed: number; // 1 = 正常
+  /** 韵律起伏强度 0~1：问句上扬、重点放慢加重、短句干脆长句放缓 */
+  prosody: number;
   captions: boolean;
   autoDuration: boolean;
 }

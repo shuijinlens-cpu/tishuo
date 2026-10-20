@@ -122,9 +122,37 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: 'night',
   ratio: '16:9',
   speed: 1,
+  prosody: 0.6,
   captions: true,
   autoDuration: true,
 };
+
+/* ---------------- 按 Key 自动识别服务商 ----------------
+ * 用户最常见用法：粘了 Key 就走人，懒得选服务商。
+ * 这里按 Key / 地址的格式猜一个，猜中就自动把 BaseURL 和模型名全部填好。
+ * 猜不中就返回 null，让用户手动选（只选一次，之后永久记住）。 */
+
+export function detectProvider(apiKey: string, baseUrl = ''): ProviderPreset | null {
+  const k = (apiKey || '').trim();
+  const b = (baseUrl || '').toLowerCase();
+  if (b.includes('dashscope') || b.includes('aliyuncs')) return byId('dashscope');
+  if (b.includes('bigmodel')) return byId('zhipu');
+  if (b.includes('volces')) return byId('ark');
+  if (b.includes('openai.com')) return byId('openai');
+  if (!k) return null;
+  // 智谱的 Key 是 "id.secret" 两段 JWT 风格（含两个点）
+  if ((k.match(/\./g) || []).length >= 2) return byId('zhipu');
+  if (/^sk-proj-/.test(k)) return byId('openai');
+  if (/^sk-/.test(k)) {
+    // 百炼的 sk- key 一般 30~40 位；OpenAI 的更长
+    return k.length <= 40 ? byId('dashscope') : byId('openai');
+  }
+  return null;
+}
+
+function byId(id: string): ProviderPreset {
+  return PROVIDERS.find((p) => p.id === id) as ProviderPreset;
+}
 
 /* ---------------- 基础请求 ---------------- */
 

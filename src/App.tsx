@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { STAGES, stageMeta } from './engine/theme';
 import { VideoStage } from './components/VideoStage';
 import { StoryboardList } from './components/StoryboardList';
@@ -8,10 +8,10 @@ import { OcrConfirm } from './components/OcrConfirm';
 import { generateStoryboard, isConfigured, PROVIDERS, recognizeQuestion, synthesize } from './lib/ai';
 import type { OcrResult } from './lib/ocr';
 import { warmupOcr } from './lib/ocr';
-import { getPreset, presetForStage } from './lib/voice';
+import { getPreset, presetForStage, synthesizeNarration } from './lib/voice';
 import { tryLocalSolve } from './lib/localSolve';
 import { getAudioContext } from './engine/player';
-import { loadSettings, saveSettings } from './lib/store';
+import { autoConfigFromKey, loadSettings, saveSettings } from './lib/store';
 import { SAMPLES, samplesFor, type Sample } from './lib/samples';
 import type { Settings, Stage, Storyboard } from './lib/types';
 
@@ -36,6 +36,7 @@ export default function App() {
   const live = isConfigured(settings);
   const st = stageMeta(stage);
   const providerName = PROVIDERS.find((p) => p.id === settings.providerId)?.name || '自定义';
+  const activeModel = settings.textModel || settings.visionModel || '';
   const voiceName = getPreset(settings.voicePreset).name;
 
   useEffect(() => { saveSettings(settings); }, [settings]);
@@ -44,6 +45,21 @@ export default function App() {
   useEffect(() => {
     const t = setTimeout(() => { warmupOcr(); }, 2500);
     return () => clearTimeout(t);
+  }, []);
+
+  // 粘过 Key 但没选服务商 → 按 Key 格式自动补全（只做一次，之后设置里永久记住）
+  const autoDone = useRef(false);
+  useEffect(() => {
+    if (autoDone.current) return;
+    autoDone.current = true;
+    setSettings((prev) => {
+      const next = autoConfigFromKey(prev);
+      if (next !== prev) {
+        const p = PROVIDERS.find((x) => x.id === next.providerId);
+        setToast(`已记住模型：${p?.name || next.providerId}${next.textModel ? ` · ${next.textModel}` : ''}，以后不用再选`);
+      }
+      return next;
+    });
   }, []);
 
   useEffect(() => {
@@ -133,12 +149,24 @@ export default function App() {
         const txt = (storyboard.scenes[i].narration || '').trim();
         if (!txt) { out.push(null); continue; }
         setBusy(`合成配音 ${i + 1}/${storyboard.scenes.length}`);
-        const arr = await synthesize(settings, txt);
-        const buf = await ac.decodeAudioData(arr.slice(0));
-        out.push(buf);
+        try {
+          // 逐句合成：每句按自己的语速和语气指令，句间插停顿 → 导出视频里是有起伏的人声
+          const buf = await synthesizeNarration(settings, txt, ac, (d, t) =>
+            setBusy(`合成配音 ${i + 1}/${storyboard.scenes.length}（第 ${d + 1}/${t} 句）`),
+          );
+          out.push(buf);
+        } catch (e: any) {
+          // 韵律合成失败（接口不支持等）→ 退回整段合成，至少保证有声音
+          try {
+            const arr = await synthesize(settings, txt);
+            out.push(await ac.decodeAudioData(arr.slice(0)));
+          } catch {
+            throw e;
+          }
+        }
       }
       setBuffers(out);
-      setToast('配音合成完成，导出的视频会带人声');
+      setToast('配音合成完成（带抑扬顿挫），导出的视频会有人声');
     } catch (e: any) {
       setToast(e?.message || '配音失败');
     } finally {
@@ -179,9 +207,19 @@ export default function App() {
           </div>
         </div>
         <div className="top-actions">
-          <span className={`mode-pill ${live ? 'live' : 'demo'}`}>
-            {live ? providerName : '本地模式 · 免 Key'}
-          </span>
+          {live ? (
+            <span className="mode-pill live" title={`解题：${settings.textModel || '-'}｜识题：${settings.visionModel || '-'}`}>
+              {providerName}{activeModel ? ` · ${activeModel}` : ''}
+            </span>
+          ) : (
+            <button
+              className="mode-pill demo"
+              onClick={() => setSettingsOpen(true)}
+              title="点开设置，把服务商和 Key 配好（只配一次，自动记住）"
+            >
+              {settings.apiKey ? '⚠ 配置待完善 · 点我' : '本地模式 · 免 Key'}
+            </button>
+          )}
           <a className="btn ghost sm" href="./download.html" target="_blank" rel="noreferrer">📲 装到手机</a>
           <button className="btn ghost sm" onClick={() => setSettingsOpen(true)}>⚙ 设置</button>
         </div>
@@ -289,10 +327,11 @@ export default function App() {
 
             {!live && (
               <div className="free-tip">
-                <strong>这套流程现在就能跑</strong>
+                <strong>{settings.apiKey ? 'Key 已记住，还差一步' : '这套流程现在就能跑'}</strong>
                 <p>
-                  识题用手机本机 OCR（离线、免费），一元一次/二次方程、四则运算这类题连讲解也能本机生成。
-                  更复杂的题目开通免费大模型即可：设置 → 选「智谱 GLM」→ 填 Key（glm-4-flash 与 glm-4v-flash 免费）。
+                  {settings.apiKey
+                    ? '点右上角的状态标签打开设置，服务商选好、接口地址填上就能用（只配一次，之后永久生效）。'
+                    : '识题用手机本机 OCR（离线、免费），一元一次/二次方程、四则运算这类题连讲解也能本机生成。更复杂的题目开通免费大模型即可：设置 → 选「智谱 GLM」→ 填 Key（glm-4-flash 与 glm-4v-flash 免费）。'}
                 </p>
               </div>
             )}
