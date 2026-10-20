@@ -5,3 +5,11 @@ dist
 .vite
 
 .preview/
+test-ocr.html
+
+# OCR 引擎的运行文件由 scripts/prepare-assets.mjs 从 node_modules 复制，不入库
+public/tesseract/
+
+# Capacitor 生成的 Android 工程（CI 里现生成）
+android/
+ios/

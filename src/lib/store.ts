@@ -34,7 +34,8 @@ export function applyPreset(s: Settings, providerId: string): Settings {
     visionModel: p.visionModel || s.visionModel,
     ttsModel: p.ttsModel || s.ttsModel,
     ttsVoice: p.ttsVoice || s.ttsVoice,
-    ttsEngine: p.id === 'demo' ? 'browser' : s.ttsEngine,
+    ttsProtocol: p.ttsProtocol || s.ttsProtocol,
+    ttsEngine: p.tts ? (s.ttsEngine === 'none' ? 'api' : s.ttsEngine) : 'browser',
   };
 }
 

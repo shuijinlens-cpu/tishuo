@@ -1,5 +1,7 @@
-import type { ChatMessage, Scene, Settings, Stage, Storyboard } from './types';
+import type { ChatMessage, Scene, Settings, Stage, Storyboard, TtsProtocol } from './types';
 import { compileExpr } from './math';
+import { localOcr, type OcrProgress, type OcrResult } from './ocr';
+import { cloudTts } from './voice';
 
 /* ---------------- 服务商预设 ---------------- */
 
@@ -11,6 +13,7 @@ export interface ProviderPreset {
   visionModel: string;
   ttsModel: string;
   ttsVoice: string;
+  ttsProtocol: TtsProtocol;
   note: string;
   vision: boolean;
   tts: boolean;
@@ -19,13 +22,14 @@ export interface ProviderPreset {
 export const PROVIDERS: ProviderPreset[] = [
   {
     id: 'demo',
-    name: '演示模式（无需 Key）',
+    name: '本地模式（无需 Key）',
     baseUrl: '',
     textModel: '',
     visionModel: '',
     ttsModel: '',
     ttsVoice: '',
-    note: '使用内置样题与手写分镜，完整体验"拍照 → 成片"全流程。填入任意 OpenAI 兼容 Key 即可解锁真实识题与生成。',
+    ttsProtocol: 'openai',
+    note: '识题用手机自带的端侧 OCR（离线可用），配音用系统神经网络音色，内置样题可完整体验全流程。',
     vision: false,
     tts: false,
   },
@@ -37,9 +41,23 @@ export const PROVIDERS: ProviderPreset[] = [
     visionModel: 'qwen-vl-max',
     ttsModel: 'qwen-tts',
     ttsVoice: 'Cherry',
-    note: 'qwen-vl-max 识题很准；语音用 qwen-tts（部分账号需开通）。有免费额度。',
+    ttsProtocol: 'dashscope',
+    note: 'qwen-vl-max 识题最准；qwen-tts / cosyvoice 的人声接近真人，还能复刻音色。有免费额度。',
     vision: true,
     tts: true,
+  },
+  {
+    id: 'zhipu',
+    name: '智谱 GLM（有免费模型）',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    textModel: 'glm-4-flash',
+    visionModel: 'glm-4v-flash',
+    ttsModel: '',
+    ttsVoice: '',
+    ttsProtocol: 'openai',
+    note: 'glm-4v-flash 识图免费、国内直连，是零成本开通 AI 识题的首选。',
+    vision: true,
+    tts: false,
   },
   {
     id: 'ark',
@@ -49,19 +67,8 @@ export const PROVIDERS: ProviderPreset[] = [
     visionModel: 'doubao-1-5-vision-pro-32k-250115',
     ttsModel: '',
     ttsVoice: '',
-    note: '识题速度快；语音需另配（可先用浏览器配音）。',
-    vision: true,
-    tts: false,
-  },
-  {
-    id: 'zhipu',
-    name: '智谱 GLM',
-    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-    textModel: 'glm-4-plus',
-    visionModel: 'glm-4v-plus',
-    ttsModel: '',
-    ttsVoice: '',
-    note: 'GLM-4V 识图能力好，国内直连稳定。',
+    ttsProtocol: 'openai',
+    note: '识题速度快；语音需另配（可先用系统神经音色）。',
     vision: true,
     tts: false,
   },
@@ -72,8 +79,9 @@ export const PROVIDERS: ProviderPreset[] = [
     textModel: 'gpt-4o-mini',
     visionModel: 'gpt-4o',
     ttsModel: 'gpt-4o-mini-tts',
-    ttsVoice: 'alloy',
-    note: '识题 + 配音都能一站解决，但国内访问需自备网络。',
+    ttsVoice: 'nova',
+    ttsProtocol: 'openai',
+    note: 'gpt-4o-mini-tts 支持用自然语言描述音色，最像真人；国内访问需自备网络。',
     vision: true,
     tts: true,
   },
@@ -85,6 +93,7 @@ export const PROVIDERS: ProviderPreset[] = [
     visionModel: '',
     ttsModel: '',
     ttsVoice: '',
+    ttsProtocol: 'openai',
     note: '任何 OpenAI 兼容网关都可。推荐用仓库里的 proxy/worker.js 部署到 Cloudflare，把 Key 藏在服务端。',
     vision: true,
     tts: true,
@@ -100,6 +109,10 @@ export const DEFAULT_SETTINGS: Settings = {
   ttsModel: '',
   ttsVoice: '',
   ttsEngine: 'browser',
+  ttsProtocol: 'openai',
+  voicePreset: 'teacher-female',
+  voiceStyle: '',
+  ocrEngine: 'auto',
   theme: 'night',
   ratio: '16:9',
   speed: 1,
@@ -205,6 +218,37 @@ export async function ocrQuestion(s: Settings, dataUrl: string): Promise<string>
     { vision: true },
   );
   return text.replace(/^```[\s\S]*?\n|```$/g, '').trim();
+}
+
+/**
+ * 统一识题入口：有 Key 且选了视觉模型 → 走大模型（对公式更准）；
+ * 否则走端侧 OCR（不花钱、离线可用），结果都交给用户确认后再生成。
+ */
+export async function recognizeQuestion(
+  s: Settings,
+  dataUrl: string,
+  onProgress?: (p: OcrProgress) => void,
+): Promise<OcrResult> {
+  const wantVision = s.ocrEngine !== 'local';
+  const canVision = isConfigured(s) && !!s.visionModel;
+  if (wantVision && canVision) {
+    onProgress?.({ pct: 0.35, label: '视觉模型识题' });
+    try {
+      const text = await ocrQuestion(s, dataUrl);
+      onProgress?.({ pct: 0.96, label: '整理题目' });
+      return {
+        text,
+        confidence: 95,
+        engine: 'vision',
+        warn: text.replace(/\s/g, '').length < 8 ? '识别内容偏少，请确认是否拍到完整题目' : undefined,
+      };
+    } catch (e: any) {
+      // 大模型失败（没额度、网络、模型名不对）自动退到端侧 OCR，别让用户卡住
+      const local = await localOcr(dataUrl, onProgress);
+      return { ...local, warn: `${local.warn || ''}（AI 识题失败：${e?.message || e}，已改用本机识别）`.trim() };
+    }
+  }
+  return localOcr(dataUrl, onProgress);
 }
 
 /* ---------------- 分镜生成 ---------------- */
@@ -500,34 +544,5 @@ export async function generateStoryboard(
 
 export async function synthesize(s: Settings, text: string): Promise<ArrayBuffer> {
   if (!isConfigured(s)) throw new Error('未配置接口，无法合成配音');
-  const model = s.ttsModel;
-  if (!model) throw new Error('当前服务商没有配置 TTS 模型，请改用浏览器配音。');
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 60000);
-  try {
-    const res = await fetch(joinUrl(s.baseUrl, '/audio/speech'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${s.apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        input: text,
-        voice: s.ttsVoice || 'alloy',
-        response_format: 'mp3',
-        speed: s.speed,
-      }),
-      signal: ctrl.signal,
-    });
-    if (!res.ok) {
-      const t = await res.text();
-      throw new Error(`配音接口 ${res.status}：${t.slice(0, 200)}`);
-    }
-    return await res.arrayBuffer();
-  } catch (e) {
-    throw new Error(`配音失败：${errText(e)}`);
-  } finally {
-    clearTimeout(timer);
-  }
+  return cloudTts(s, text);
 }

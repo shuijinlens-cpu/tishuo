@@ -1,5 +1,6 @@
 import type { Scene, Settings, Storyboard } from '../lib/types';
 import { estimateDuration, renderScene, type RenderOpts } from './render';
+import { getPreset, Narrator, waitForVoices } from '../lib/voice';
 
 export interface TimelineItem {
   scene: Scene;
@@ -39,6 +40,7 @@ export class Player {
   private dest: MediaStreamAudioDestinationNode | null = null;
   private ctxStart = 0;
   private spokenIndex = -1;
+  private narrator: Narrator | null = null;
   private waiters: (() => void)[] = [];
   width = 1280;
   height = 720;
@@ -77,6 +79,10 @@ export class Player {
     this.total = acc || 1;
     this.t = Math.min(this.t, this.total);
     this.render(this.t);
+    // 提前把系统音色列表读出来，避免第一屏开口时没声音（voices 是异步加载的）
+    if (settings.ttsEngine === 'browser') waitForVoices().catch(() => {});
+    if (this.narrator) this.narrator.setVoice(getPreset(settings.voicePreset));
+    else this.narrator = new Narrator({ preset: getPreset(settings.voicePreset), speed: settings.speed });
   }
 
   private renderOpts(): RenderOpts {
@@ -166,16 +172,13 @@ export class Player {
     if (this.spokenIndex === index) return;
     this.spokenIndex = index;
     const it = this.items[index];
-    if (!it) return;
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(it.scene.narration);
-    u.lang = 'zh-CN';
-    u.rate = 1.02 * (this.cfg?.settings.speed || 1);
-    u.pitch = this.cfg?.storyboard.stage === 'primary' ? 1.12 : 1;
-    const voices = window.speechSynthesis.getVoices();
-    const zh = voices.find((v) => /zh-CN|Chinese|Xiaoxiao|Yaoyao|Huihui/i.test(v.lang + v.name));
-    if (zh) u.voice = zh;
-    window.speechSynthesis.speak(u);
+    if (!it || !it.scene.narration.trim()) return;
+    const settings = this.cfg!.settings;
+    // 用断句 + 韵律的朗读器，句间留白、问句升调，避免机器连读
+    if (!this.narrator) {
+      this.narrator = new Narrator({ preset: getPreset(settings.voicePreset), speed: settings.speed });
+    }
+    this.narrator.speak(it.scene.narration);
   }
 
   play() {
@@ -196,6 +199,7 @@ export class Player {
       this.speak(this.indexAt(this.t));
       if (t >= this.total) {
         this.playing = false;
+        this.narrator?.cancel();
         window.speechSynthesis?.cancel();
         this.cfg?.onEnd?.();
         this.waiters.splice(0).forEach((w) => w());
@@ -210,6 +214,7 @@ export class Player {
     this.playing = false;
     cancelAnimationFrame(this.raf);
     this.stopAudio();
+    this.narrator?.cancel();
     window.speechSynthesis?.cancel();
     this.spokenIndex = -1;
     this.cfg?.onTime?.(this.t, false, this.indexAt(this.t));

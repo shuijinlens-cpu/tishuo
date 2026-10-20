@@ -131,11 +131,17 @@ export interface Storyboard {
   topic: string;
   answer: string;
   scenes: Scene[];
-  source?: 'demo' | 'ai' | 'custom';
+  source?: 'demo' | 'ai' | 'custom' | 'local';
   createdAt?: number;
 }
 
 export type TtsEngine = 'browser' | 'api' | 'none';
+
+/** 识题引擎：auto = 有 Key 走视觉大模型，没有就用端侧 OCR */
+export type OcrEngine = 'auto' | 'local' | 'vision';
+
+/** 云端语音协议（决定请求体格式） */
+export type TtsProtocol = 'openai' | 'dashscope';
 
 export interface Settings {
   providerId: string;
@@ -146,6 +152,12 @@ export interface Settings {
   ttsModel: string;
   ttsVoice: string;
   ttsEngine: TtsEngine;
+  ttsProtocol: TtsProtocol;
+  /** 音色预设 id，见 lib/voice.ts */
+  voicePreset: string;
+  /** 自然语言描述想要的音色/语气，会作为 instructions 传给云端 TTS */
+  voiceStyle: string;
+  ocrEngine: OcrEngine;
   theme: 'night' | 'light';
   ratio: '16:9' | '9:16';
   speed: number; // 1 = 正常

@@ -3,12 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0b1020" />
+    <meta name="theme-color" content="#7c9cff" />
     <title>题说 · 拍照生成讲题视频</title>
-    <meta name="description" content="拍照上传题目，AI 自动生成讲解视频。小学趣味动画、中学数形结合、大学清晰推导，还能按你的思路定制讲解。" />
+    <meta name="description" content="拍照上传题目，自动识别题目、生成讲解视频。小学趣味动画、中学数形结合、大学清晰推导，还能按你的思路定制讲解。" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="题说" />
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      if ('serviceWorker' in navigator && location.protocol === 'https:') {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('./sw.js').catch(function () {});
+        });
+      }
+    </script>
   </body>
 </html>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { compressImage } from '../lib/store';
+import { isNative, nativePhoto, nativePick } from '../lib/native';
 
 interface Props {
   image: string | null;
@@ -38,6 +39,32 @@ export function Uploader({ image, onImage, onError }: Props) {
     return () => window.removeEventListener('paste', onPaste);
   }, []);
 
+  const openCamera = async () => {
+    if (isNative()) {
+      try {
+        const d = await nativePhoto();
+        if (d) onImage(d);
+      } catch (e: any) {
+        if (!/cancel/i.test(e?.message || '')) onError('打开相机失败：' + (e?.message || ''));
+      }
+      return;
+    }
+    setCamOpen(true);
+  };
+
+  const openGallery = async () => {
+    if (isNative()) {
+      try {
+        const d = await nativePick();
+        if (d) onImage(d);
+      } catch (e: any) {
+        if (!/cancel/i.test(e?.message || '')) onError('打开相册失败：' + (e?.message || ''));
+      }
+      return;
+    }
+    fileRef.current?.click();
+  };
+
   return (
     <div className="uploader-wrap">
       <div
@@ -49,24 +76,24 @@ export function Uploader({ image, onImage, onError }: Props) {
           setDrag(false);
           handleFile(e.dataTransfer.files?.[0]);
         }}
-        onClick={() => !image && fileRef.current?.click()}
+        onClick={() => !image && openGallery()}
       >
         {image ? (
           <>
             <img src={image} alt="题目" />
             <div className="uploader-actions">
-              <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}>换一张</button>
+              <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); openGallery(); }}>换一张</button>
               <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); onImage(null); }}>移除</button>
             </div>
           </>
         ) : (
           <div className="uploader-empty">
             <div className="up-icon">📷</div>
-            <strong>拍照 / 截图 / 拖进来</strong>
-            <span>支持 Ctrl+V 直接粘贴截图</span>
+            <strong>拍下题目</strong>
+            <span>整道题放进画面，尽量正对、光线亮一点</span>
             <div className="row gap8 center mt8">
-              <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}>选图片</button>
-              <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); setCamOpen(true); }}>打开相机</button>
+              <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); openGallery(); }}>从相册选</button>
+              <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); openCamera(); }}>打开相机</button>
             </div>
           </div>
         )}

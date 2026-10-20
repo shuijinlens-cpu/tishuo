@@ -367,3 +367,98 @@ main { flex: 1; width: 100%; max-width: 1360px; margin: 0 auto; padding: 26px 28
   .result { grid-template-columns: 1fr; }
   .sb-list { max-height: none; }
 }
+
+/* ---------------- 识题确认卡 ---------------- */
+.ocr-progress { margin: 8px 0 2px; }
+.ocr-progress .bar {
+  height: 6px; border-radius: 99px; background: #eef1f8; overflow: hidden;
+}
+.ocr-progress .bar i {
+  display: block; height: 100%; border-radius: 99px;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  transition: width 0.35s ease;
+}
+.ocr-progress span { display: block; margin-top: 5px; font-size: 11.5px; color: var(--muted); }
+
+.ocr-card {
+  margin-top: 10px; padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 5%, #fff);
+  animation: ocrIn 0.28s ease;
+}
+@keyframes ocrIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.ocr-head { display: flex; align-items: center; justify-content: space-between; }
+.ocr-badges { display: flex; align-items: center; gap: 6px; }
+.ocr-badge {
+  font-size: 11.5px; padding: 3px 9px; border-radius: 99px;
+  background: #fff; border: 1px solid var(--line); color: var(--ink2);
+}
+.ocr-quality { font-size: 11.5px; padding: 3px 9px; border-radius: 99px; }
+.ocr-quality.high { color: #087f5b; background: #e7fbf3; }
+.ocr-quality.mid { color: #b7791f; background: #fff8e6; }
+.ocr-quality.low { color: #c0392b; background: #fdeceb; }
+.ocr-warn {
+  margin-top: 8px; padding: 8px 10px; border-radius: 10px;
+  background: #fff8e6; color: #8a6116; font-size: 12px; line-height: 1.55;
+}
+.ocr-body { display: flex; gap: 10px; margin-top: 10px; }
+.ocr-thumb {
+  width: 96px; height: 96px; object-fit: cover; border-radius: 10px;
+  border: 1px solid var(--line); flex: 0 0 auto;
+}
+.ocr-edit { flex: 1; min-width: 0; }
+.ocr-label { display: block; font-size: 11.5px; color: var(--muted); margin-bottom: 4px; }
+.ocr-area { width: 100%; font-size: 13.5px; line-height: 1.7; }
+.ocr-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+
+/* ---------------- 免 Key 提示 / 免费开通引导 ---------------- */
+.free-tip {
+  margin-top: 12px; padding: 11px 12px; border-radius: 12px;
+  background: #f0f7ff; border: 1px solid #cfe3ff;
+}
+.free-tip strong { display: block; font-size: 12.5px; color: #134a8e; }
+.free-tip p { margin: 5px 0 0; font-size: 11.8px; line-height: 1.65; color: #3f5b7a; }
+
+.free-guide {
+  padding: 12px; border-radius: 12px;
+  background: #f3fbf6; border: 1px solid #b7ebcb;
+}
+.free-guide strong { font-size: 13px; color: #0b6b45; }
+.free-guide ol { margin: 8px 0 0; padding-left: 18px; }
+.free-guide li { font-size: 12px; line-height: 1.75; color: #16603f; }
+
+/* ---------------- 音色选择 ---------------- */
+.voice-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px;
+}
+.voice-card {
+  position: relative; text-align: left; cursor: pointer;
+  padding: 10px 10px 11px; border-radius: 12px;
+  border: 1px solid var(--line); background: #fff;
+  display: flex; flex-direction: column; gap: 2px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.voice-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+.voice-card.on {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  background: color-mix(in srgb, var(--accent) 5%, #fff);
+}
+.voice-card .vc-emoji { font-size: 17px; line-height: 1; }
+.voice-card strong { font-size: 12.5px; color: var(--ink); }
+.voice-card small { font-size: 11px; color: var(--muted); line-height: 1.45; }
+.voice-card .vc-playing {
+  position: absolute; top: 8px; right: 8px; font-size: 10px; font-style: normal;
+  color: #087f5b; background: #e7fbf3; padding: 2px 6px; border-radius: 99px;
+}
+.tts-box {
+  padding: 12px; border-radius: 12px;
+  background: #fafbff; border: 1px solid var(--line);
+}
+
+@media (max-width: 720px) {
+  .voice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ocr-body { flex-direction: column; }
+  .ocr-thumb { width: 100%; height: 120px; }
+}

@@ -1,4 +1,4 @@
-name: Deploy to GitHub Pages
+name: Deploy web + build Android APK
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,16 +25,82 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: dist
+          retention-days: 3
+
+  apk:
+    needs: web
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - run: npm ci
+      - run: npm run build
+      - name: 生成 Android 工程
+        run: |
+          npx cap add android
+          npx cap sync android
+      - name: 打包 APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+      - name: 收集产物
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/debug/app-debug.apk out/tishuo.apk
+          ls -lh out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: out/tishuo.apk
+          retention-days: 90
+      - name: 发布到 Releases（永久下载链接）
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: 题说 Android v${{ github.run_number }}
+          body: |
+            安卓安装包（debug 签名，自用/内测）。
+            直接安装：下载 tishuo.apk → 允许「未知来源」→ 安装。
+          files: out/tishuo.apk
+          make_latest: true
+
+  deploy:
+    needs: [web, apk]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: dist
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: apk
+          path: apk
+      - name: 把 APK 一起发布到站点（同一域名，国内可下）
+        run: |
+          if [ -f apk/tishuo.apk ]; then
+            cp apk/tishuo.apk dist/tishuo.apk
+            ls -lh dist/tishuo.apk
+          else
+            echo "这次没有 APK 产物，站点照常部署"
+          fi
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
-
-  deploy:
-    needs: build
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - uses: actions/deploy-pages@v4

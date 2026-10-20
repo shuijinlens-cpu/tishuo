@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>下载题说 App · 拍照讲题视频</title>
+<meta name="theme-color" content="#7c9cff" />
+<link rel="manifest" href="./manifest.webmanifest" />
+<link rel="apple-touch-icon" href="./icon-192.png" />
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  :root {
+    --ink: #101828; --ink2: #475467; --muted: #8b95a8;
+    --line: #e8ebf4; --accent: #7c9cff; --accent2: #b48cff; --bg: #f6f7fb;
+    --font: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  }
+  body {
+    margin: 0; font-family: var(--font); color: var(--ink); background: var(--bg);
+    padding: 0 0 40px; -webkit-font-smoothing: antialiased;
+  }
+  .hero {
+    padding: 28px 20px 26px; text-align: center; color: #fff;
+    background: linear-gradient(140deg, #7c9cff, #b48cff 70%, #ffb86b);
+  }
+  .hero img.icon {
+    width: 84px; height: 84px; border-radius: 22px; display: block; margin: 0 auto 12px;
+    box-shadow: 0 14px 30px -14px rgba(20, 20, 60, .55);
+  }
+  .hero h1 { margin: 0; font-size: 22px; letter-spacing: .5px; }
+  .hero p { margin: 6px 0 0; font-size: 13px; opacity: .92; line-height: 1.6; }
+  .wrap { max-width: 560px; margin: 0 auto; padding: 0 16px; }
+  .card {
+    background: #fff; border: 1px solid var(--line); border-radius: 18px;
+    padding: 16px; margin-top: 14px; box-shadow: 0 1px 2px rgba(16,24,40,.04), 0 18px 40px -30px rgba(16,24,40,.35);
+  }
+  .dl {
+    display: block; text-align: center; text-decoration: none;
+    background: linear-gradient(135deg, #6f8dff, #a06bff); color: #fff;
+    padding: 15px 18px; border-radius: 14px; font-weight: 700; font-size: 16px;
+    box-shadow: 0 14px 26px -14px rgba(112,110,255,.75);
+  }
+  .dl small { display: block; font-weight: 400; font-size: 11.5px; opacity: .88; margin-top: 4px; }
+  .dl.alt {
+    background: #fff; color: #4a5cff; border: 1.5px solid #d8ddff; box-shadow: none; margin-top: 10px;
+    font-size: 14px; padding: 12px;
+  }
+  h2 { font-size: 14px; margin: 0 0 10px; }
+  ol, ul { margin: 0; padding-left: 18px; }
+  li { font-size: 12.8px; line-height: 1.85; color: var(--ink2); }
+  .qr-row { display: flex; gap: 14px; align-items: center; }
+  .qr-row img { width: 118px; height: 118px; border-radius: 10px; border: 1px solid var(--line); }
+  .qr-txt { font-size: 12px; color: var(--ink2); line-height: 1.7; }
+  .qr-txt b { color: var(--ink); font-size: 12.5px; }
+  .badge {
+    display: inline-block; font-size: 11px; padding: 3px 9px; border-radius: 99px;
+    background: #eef2ff; color: #4a5cff; margin-left: 6px; vertical-align: 2px;
+  }
+  .muted { color: var(--muted); font-size: 11.5px; line-height: 1.7; }
+  a { color: #4a5cff; }
+  @media (min-width: 640px) { .hero { padding: 40px 20px 34px; } .hero h1 { font-size: 26px; } }
+</style>
+</head>
+<body>
+  <div class="hero">
+    <img class="icon" src="./icon-192.png" alt="题说" />
+    <h1>题说 · 拍照讲题</h1>
+    <p>拍下题目 → 自动识别 → 你核对修改 → 生成数形结合的讲解视频</p>
+  </div>
+
+  <div class="wrap">
+    <div class="card">
+      <a class="dl" id="apk" href="./tishuo.apk" download>
+        下载安卓 App（APK）
+        <small>约 30MB · 离线可用 · 永久地址</small>
+      </a>
+      <a class="dl alt" href="./index.html">不装 App，直接用网页版</a>
+      <p class="muted" id="apkTip" style="margin:10px 0 0">
+        安装时若提示「禁止安装未知来源应用」，在弹窗里选「设置」→ 允许来源即可。
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>手机扫码 <span class="badge">推荐</span></h2>
+      <div class="qr-row">
+        <img src="./qr-apk.png" alt="安卓安装包二维码" />
+        <div class="qr-txt">
+          <b>安卓：扫码直接下载安装包</b><br />
+          微信里扫码后，点右上角「…」→ 用浏览器打开，才能正常下载。<br />
+          下载地址永久有效，换手机也能扫。
+        </div>
+      </div>
+      <div class="qr-row" style="margin-top:14px">
+        <img src="./qr-site.png" alt="网页版二维码" />
+        <div class="qr-txt">
+          <b>iPhone / 不想装 App：扫码用网页版</b><br />
+          Safari 打开后点底部分享 → 「添加到主屏幕」，图标就在桌面上了，和 App 一样用。
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>第一次用，按这三步</h2>
+      <ol>
+        <li>拍一张题目（整道题都在画面里，尽量正对、光线亮）</li>
+        <li>点「识别这道题」，等进度条走完，<b>核对识别结果，错了直接改</b></li>
+        <li>点「确认无误，生成讲解视频」，播放预览后导出，直接发抖音或班级群</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h2>为什么值得装成 App</h2>
+      <ul>
+        <li>识题引擎（约 2MB 中文模型）跟着装进来，<b>没网也能识别</b></li>
+        <li>全屏无地址栏，拍照按钮一步直达</li>
+        <li>视频导出用手机本地算力，不上传题目照片</li>
+      </ul>
+    </div>
+
+    <p class="muted" style="text-align:center;margin-top:18px">
+      Android 7.0 以上 · iOS 15 以上（用「添加到主屏幕」）<br />
+      安装包为调试签名版本，仅用于自用与内测，不上架应用商店。
+    </p>
+  </div>
+
+  <script>
+    // 如果 APK 还没构建出来，把按钮换成提示，避免点出 404
+    fetch('./tishuo.apk', { method: 'HEAD' }).then(function (r) {
+      if (!r.ok) {
+        var a = document.getElementById('apk');
+        a.removeAttribute('href');
+        a.removeAttribute('download');
+        a.style.opacity = '.55';
+        a.style.pointerEvents = 'none';
+        a.innerHTML = '安卓安装包正在构建中<br><small>稍后刷新本页即可下载</small>';
+        document.getElementById('apkTip').textContent = '也可以先用网页版，功能完全一样。';
+      }
+    }).catch(function () {});
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () { navigator.serviceWorker.register('./sw.js').catch(function () {}); });
+    }
+  </script>
+</body>
+</html>

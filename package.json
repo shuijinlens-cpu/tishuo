@@ -5,20 +5,31 @@
   "type": "module",
   "description": "题说 Tishuo — 拍照识题，生成 AI 讲题视频",
   "scripts": {
+    "prepare:assets": "node scripts/prepare-assets.mjs",
+    "predev": "npm run prepare:assets",
     "dev": "vite",
+    "prebuild": "npm run prepare:assets",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@capacitor/android": "^7.4.0",
+    "@capacitor/camera": "^7.0.5",
+    "@capacitor/core": "^7.4.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "tesseract.js": "^7.0.0",
+    "wasm-feature-detect": "^1.8.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^7.4.0",
     "@napi-rs/canvas": "^1.0.11",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "qrcode": "^1.5.4",
     "typescript": "^5.6.3",
     "vite": "^5.4.11"
   }
