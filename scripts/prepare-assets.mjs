@@ -36,6 +36,7 @@ for (const [from, to] of files) {
  */
 const modelDir = join(root, 'public/tessdata');
 const modelSrc = join(root, 'models');
+mkdirSync(modelDir, { recursive: true });
 const models = ['chi_sim.traineddata', 'eng.traineddata'];
 let unzipped = 0;
 for (const m of models) {
