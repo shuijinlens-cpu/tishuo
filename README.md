@@ -4,7 +4,7 @@
 
 覆盖 **小学 / 初中 / 高中 / 大学** 四个学段，每个学段有专属讲解引擎；还支持**定制讲解**：你写下讲解思路，AI 严格按你的顺序生成。
 
-**在线使用**：GitHub Pages 地址见仓库 About 侧的链接（Settings → Pages 可查）。
+**在线使用**：https://shuijinlens-cpu.github.io/tishuo/ （打开即用，内置 8 道样题无需任何 Key）
 
 ---
 
