@@ -5,6 +5,7 @@
 import { copyFileSync, mkdirSync, existsSync, statSync, writeFileSync, readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { join, dirname, basename } from 'node:path';
+import { patchAndroidTemplate } from './patch-android-template.mjs';
 
 const root = process.cwd();
 const files = [
@@ -53,3 +54,6 @@ for (const m of models) {
 console.log(`[prepare-assets] 解压 ${unzipped} 个识别模型`);
 
 console.log(`[prepare-assets] 完成，复制 ${copied} 个 OCR 引擎文件`);
+
+/** 打包安卓时让工程自带麦克风权限（录音 / 我的声音） */
+patchAndroidTemplate(root);
