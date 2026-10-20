@@ -45,13 +45,20 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@v3
+      # ubuntu 镜像自带 Android SDK（ANDROID_HOME 已就绪），不再用 setup-android，
+      # 那个 action 会去装已下线的 'tools' 包导致失败
+      - run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms" || true
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
       - run: npm ci
       - run: npm run build
       - name: 生成 Android 工程
         run: |
           npx cap add android
           npx cap sync android
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+          grep -n "compileSdkVersion\|targetSdkVersion" android/variables.gradle || true
       - name: 打包 APK
         run: |
           cd android
