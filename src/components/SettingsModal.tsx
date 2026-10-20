@@ -43,6 +43,21 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
     onChange(next);
   };
 
+  /** 本地模式（还没选服务商）时直接粘 Key：识别成功就自动切服务商 + 填好接口和模型，不用手动选 */
+  const [keyHint, setKeyHint] = useState('');
+  const pasteKeyQuick = (key: string) => {
+    if (!key) { set({ apiKey: '' }); setKeyHint(''); return; }
+    const p = detectProvider(key, s.baseUrl);
+    if (p) {
+      const next = applyPreset({ ...s, apiKey: key }, p.id);
+      replace(next);
+      setKeyHint(`✅ 已识别为「${p.name}」，接口地址和模型（${next.textModel}${next.visionModel ? ` / ${next.visionModel}` : ''}）都已自动填好，直接能用`);
+    } else {
+      set({ apiKey: key });
+      setKeyHint('没认出这个 Key 的格式，在上方「AI 服务商」里手动选一个就行（只选一次，之后自动记住）');
+    }
+  };
+
   const save = () => onClose();
 
   const test = async () => {
@@ -317,6 +332,21 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
               </select>
             </label>
             <p className="hint">{preset.note}</p>
+            {/* 本地模式下也把 Key 输入框露出来：粘上即自动识别服务商，不用去下拉框选 */}
+            {s.providerId === 'demo' && (
+              <label className="field mt8 quick-key">
+                <span>有大模型 Key？直接粘贴，自动识别（不用选服务商）</span>
+                <input
+                  type="password"
+                  value={s.apiKey}
+                  placeholder="粘贴 Key，接口和模型名自动填好"
+                  onChange={(e) => pasteKeyQuick(e.target.value.trim())}
+                />
+              </label>
+            )}
+            {keyHint && (
+              <p className="hint" style={{ color: keyHint.startsWith('✅') ? '#1a7f37' : undefined }}>{keyHint}</p>
+            )}
             {(s.apiKey || s.baseUrl) && (
               <button
                 className="btn ghost sm mt8"
@@ -346,8 +376,8 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
               <strong>想解锁任意题目的 AI 讲解？3 分钟免费开通</strong>
               <ol>
                 <li>打开 bigmodel.cn 注册，实名后进「API Keys」新建一个 Key</li>
-                <li>回到这里，服务商选「智谱 GLM（有免费模型）」</li>
-                <li>粘贴 Key → 保存。glm-4-flash（解题）与 glm-4v-flash（识题）都是免费的</li>
+                <li>回到这里，把 Key 粘到上方输入框——自动识别为「智谱 GLM」，不用手动选服务商</li>
+                <li>glm-4-flash（解题）和 glm-4v-flash（识题）都是免费的，粘完直接就能用</li>
               </ol>
             </section>
           )}

@@ -215,7 +215,7 @@ export default function App() {
             <button
               className="mode-pill demo"
               onClick={() => setSettingsOpen(true)}
-              title="点开设置，把服务商和 Key 配好（只配一次，自动记住）"
+              title="点开设置，粘贴 Key 就会自动识别服务商（只配一次，自动记住）"
             >
               {settings.apiKey ? '⚠ 配置待完善 · 点我' : '本地模式 · 免 Key'}
             </button>
@@ -330,8 +330,8 @@ export default function App() {
                 <strong>{settings.apiKey ? 'Key 已记住，还差一步' : '这套流程现在就能跑'}</strong>
                 <p>
                   {settings.apiKey
-                    ? '点右上角的状态标签打开设置，服务商选好、接口地址填上就能用（只配一次，之后永久生效）。'
-                    : '识题用手机本机 OCR（离线、免费），一元一次/二次方程、四则运算这类题连讲解也能本机生成。更复杂的题目开通免费大模型即可：设置 → 选「智谱 GLM」→ 填 Key（glm-4-flash 与 glm-4v-flash 免费）。'}
+                    ? '点右上角的状态标签打开设置，把 Key 粘到输入框就会自动识别服务商并填好接口和模型；识别不了就在「AI 服务商」里手动选一个（只配一次，之后永久生效）。'
+                    : '识题用手机本机 OCR（离线、免费），一元一次/二次方程、四则运算这类题连讲解也能本机生成。更复杂的题目开通免费大模型即可：设置里直接粘贴智谱 Key（glm-4-flash 与 glm-4v-flash 免费），自动识别，不用手动选服务商。'}
                 </p>
               </div>
             )}
