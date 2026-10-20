@@ -13,3 +13,6 @@ public/tesseract/
 # Capacitor 生成的 Android 工程（CI 里现生成）
 android/
 ios/
+
+# 由 prepare-assets 从 .gz 解压得到
+public/tessdata/*.traineddata

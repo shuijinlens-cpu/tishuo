@@ -240,7 +240,8 @@ async function getWorker(onProgress?: (p: OcrProgress) => void) {
       workerPath: asset('tesseract/worker.min.js'),
       corePath: asset(coreFile),
       langPath: asset('tessdata'),
-      gzip: true,
+      // 用未压缩模型：安卓打包会吞掉 .gz 后缀，网页与 APK 用同一套文件最稳
+      gzip: false,
       logger: (m: any) => {
         if (!onProgress) return;
         const status = String(m?.status || '');
