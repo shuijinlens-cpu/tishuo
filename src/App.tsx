@@ -123,7 +123,7 @@ export default function App() {
     try {
       const sb = await buildStoryboard(q);
       if (!sb) {
-        setToast('这道题需要大模型来拆解。可免费开通：智谱 GLM-4-Flash（识题和讲解都免费）——点右上角设置，选「智谱 GLM」即可。');
+        setToast('还差一步：点右上角「设置」，把「API Key」填上就能用 AI 解题（服务商已经选好，只差 Key，填一次永久记住）。');
         return;
       }
       setStoryboard(sb);
@@ -215,9 +215,13 @@ export default function App() {
             <button
               className="mode-pill demo"
               onClick={() => setSettingsOpen(true)}
-              title="点开设置，粘贴 Key 就会自动识别服务商（只配一次，自动记住）"
+              title="点开设置，把服务商选好、API Key 填好（只配一次，自动记住）"
             >
-              {settings.apiKey ? '⚠ 配置待完善 · 点我' : '本地模式 · 免 Key'}
+              {settings.providerId !== 'demo' && !settings.apiKey
+                ? `⚠ 已选${providerName}，还差 Key`
+                : settings.apiKey
+                  ? '⚠ 配置待完善 · 点我'
+                  : '本地模式 · 免 Key'}
             </button>
           )}
           <a className="btn ghost sm" href="./download.html" target="_blank" rel="noreferrer">📲 装到手机</a>

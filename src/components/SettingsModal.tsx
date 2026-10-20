@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
 import { PROVIDERS, isConfigured, chat, detectProvider } from '../lib/ai';
-import { VOICE_PRESETS, analyzeRecording, describeBestVoice, previewVoice, waitForVoices } from '../lib/voice';
+import { VOICE_PRESETS, analyzeRecording, cloudTts, describeBestVoice, pickVoice, previewVoice, waitForVoices } from '../lib/voice';
 import { applyPreset } from '../lib/store';
+import { getAudioContext } from '../engine/player';
 import type { Settings, VoiceProfile } from '../lib/types';
 
 interface Props {
@@ -73,11 +74,41 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
     }
   };
 
+  /** 直接解码播放一段云端 TTS 返回的音频（手机上也能出声） */
+  const playPreview = async (buf: ArrayBuffer, speed: number) => {
+    const ac = getAudioContext();
+    const audio = await ac.decodeAudioData(buf.slice(0));
+    const src = ac.createBufferSource();
+    src.buffer = audio;
+    src.playbackRate.value = speed;
+    src.connect(ac.destination);
+    src.start();
+  };
+
   const tryVoice = async (id: string) => {
     const vp = VOICE_PRESETS.find((x) => x.id === id)!;
     set({ voicePreset: id, useMyVoice: false });
     setTrying(id);
     await waitForVoices();
+    // 优先用云端人声试听：手机上一定有声音，且最接近导出视频的效果
+    if (s.ttsEngine === 'api' && s.ttsModel) {
+      setVoiceNote(`正在用云端人声「${s.ttsVoice || vp.cloudVoice}」试听…`);
+      try {
+        const buf = await cloudTts(s, '同学们好，今天我们来看这道题。这就是讲解时的人声效果，注意听——句号会停一下，疑问句语调会上扬，重点的地方我会说得慢一点、重一点。', { voice: s.ttsVoice || vp.cloudVoice });
+        await playPreview(buf, s.speed);
+        setTimeout(() => setTrying(''), 6000);
+        return;
+      } catch (e: any) {
+        setVoiceNote(`云端试听失败：${e?.message || e}。已回退本机语音（需要设备装了中文 TTS 引擎）。`);
+      }
+    }
+    // 本机神经网络语音
+    const v = pickVoice(vp);
+    if (!v) {
+      setVoiceNote('当前设备/浏览器没有可用的中文语音，所以听不到试听。两种办法：① 把上方「朗读方式」改成「云端人声」（配一个 TTS 模型就能真出声，最接近视频效果）；② 手机系统里安装中文 TTS 引擎（安卓：设置→语言→文字转语音输出→Google 语音服务；iPhone：设置→辅助功能→语音内容→朗读所选项 打开）。');
+      setTimeout(() => setTrying(''), 7000);
+      return;
+    }
     setVoiceNote(`正在用「${describeBestVoice(vp)}」试听`);
     await previewVoice(vp, s.speed, s.pitchShift, s.prosody);
     setTimeout(() => setTrying(''), 9000);
@@ -120,7 +151,13 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
       // 最长 25 秒自动停
       setTimeout(() => rec.state === 'recording' && rec.stop(), 25000);
     } catch (e: any) {
-      setRecErr(e?.message || '拿不到麦克风权限');
+      const msg = String(e?.message || '');
+      const denied = /NotAllowed|denied|permission|secure|not supported|NotFoundError/i.test(msg);
+      setRecErr(
+        denied
+          ? '麦克风打不开：请先在手机设置里允许「题说」使用麦克风——安卓：设置→应用→题说→权限→麦克风；iPhone：设置→题说→麦克风。开启后回到这里重新点「开始录音」。'
+          : `录音启动失败：${msg || '设备不支持'}`,
+      );
     }
   };
 
@@ -362,6 +399,11 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
               >
                 🔍 按 Key 自动识别服务商
               </button>
+            )}
+            {s.providerId !== 'demo' && !s.apiKey && (
+              <p className="hint" style={{ color: '#c0392b', background: '#fff4f2', padding: '8px 10px', borderRadius: 8, fontWeight: 600 }}>
+                ⚠ 还差最后一步：填好上方「API Key」才能真正启用 AI 解题。只选服务商、不填 Key，生成题目时会提示「需要模型」。
+              </p>
             )}
             {s.providerId !== 'demo' && (s.textModel || s.visionModel) && (
               <p className="hint">
