@@ -132,6 +132,7 @@ export function renderScene(
     case 'title': drawTitle(c, W, H, U, th, st, scene, t, dur, o); break;
     case 'steps': drawSteps(c, box, U, th, st, scene, t, dur, p); break;
     case 'formula': drawFormula(c, box, U, th, st, scene, t, p); break;
+    case 'matrix': drawMatrix(c, box, U, th, st, scene, t, dur); break;
     case 'graph': drawGraph(c, box, U, th, st, scene, t, p); break;
     case 'numberline': drawNumberLine(c, box, U, th, st, scene, t, p); break;
     case 'geometry': drawGeometry(c, box, U, th, st, scene, t, p); break;
@@ -254,7 +255,9 @@ function drawSteps(
   const n = Math.max(1, steps.length);
   const avail = box.y + box.h - top - (scene.note ? U * 0.1 : 0);
   const rowH = Math.min(U * 0.17, avail / n);
-  const bodySize = Math.min(U * 0.042, rowH * 0.27);
+  const hasMath = steps.some((s) => !!s.math);
+  const bodySize = Math.min(U * 0.042, rowH * (hasMath ? 0.23 : 0.27));
+  const mathSize = Math.min(U * 0.048, rowH * (hasMath && steps.some((s) => s.note) ? 0.24 : 0.3));
 
   steps.forEach((s, i) => {
     const at = 0.3 + (i / n) * dur * 0.42;
@@ -291,11 +294,26 @@ function drawSteps(
 
     const tx = cxp + badgeR + U * 0.022;
     const tw = box.w - (tx - box.x) - U * 0.02;
+    const textH = s.math ? rowH * 0.42 : rowH * 0.5;
     drawRich(c, s.text, {
-      x: tx, y: y + rowH * 0.1, maxW: tw, size: bodySize, color: th.text,
-      accent: st.accent, weight: 600, lineHeight: bodySize * 1.35, maxLines: 2,
+      x: tx, y: y + rowH * 0.08, maxW: tw, size: bodySize, color: th.text,
+      accent: st.accent, weight: 600, lineHeight: bodySize * 1.35, maxLines: s.math ? 1 : 2,
     });
-    if (s.note) {
+    // 具体算式：这是"不许跳步"的落地——每一步都要能看到式子本身
+    if (s.math) {
+      const mSize = Math.min(mathSize, tw / Math.max(4, s.math.length) * 2.05);
+      drawMath(
+        c, s.math,
+        { x: tx, y: y + rowH * 0.08 + textH * 0.92, w: tw },
+        mSize, st.accent,
+      );
+      if (s.note) {
+        drawRich(c, s.note, {
+          x: tx, y: y + rowH * 0.08 + textH * 0.92 + mSize * 1.55, maxW: tw,
+          size: bodySize * 0.66, color: th.muted, weight: 400, maxLines: 1,
+        });
+      }
+    } else if (s.note) {
       drawRich(c, s.note, {
         x: tx, y: y + rowH * 0.1 + bodySize * 1.45, maxW: tw,
         size: bodySize * 0.72, color: th.muted, weight: 400, maxLines: 1,
@@ -315,6 +333,140 @@ function drawSteps(
     drawRich(c, scene.note, {
       x: box.x + U * 0.025, y: ny + U * 0.004, maxW: box.w - U * 0.05,
       size: U * 0.03, color: st.accent, weight: 600, maxLines: 1,
+    });
+    c.restore();
+  }
+}
+
+/* ---------------- 矩阵 / 行变换页 ---------------- */
+
+/**
+ * 增广矩阵的初等行变换动画。
+ * 每一帧 = 一次行变换后的矩阵，帧与帧之间标出"第2行 − 3×第1行"这样的操作说明。
+ * 这是"计算过程必须列出来"最硬核的一屏：数字变化全程可见。
+ */
+function drawMatrix(
+  c: CanvasRenderingContext2D, box: any, U: number, th: Theme,
+  st: ReturnType<typeof stageMeta>, scene: Scene, t: number, dur: number,
+) {
+  let top = box.y;
+  if (scene.title) {
+    drawRich(c, scene.title, {
+      x: box.x, y: top, maxW: box.w, size: U * 0.047, color: th.text,
+      accent: st.accent, weight: 800, maxLines: 1,
+    });
+    top += U * 0.075;
+  }
+  const frames = (scene.mats || []).filter((f) => f && Array.isArray(f.rows) && f.rows.length);
+  if (!frames.length) return;
+
+  const noteH = scene.note ? U * 0.095 : 0;
+  const availH = box.y + box.h - top - noteH;
+  const rowsMax = Math.max(...frames.map((f) => f.rows.length));
+  const colsMax = Math.max(...frames.map((f) => Math.max(...f.rows.map((r) => r.length))));
+  const n = frames.length;
+  const gap = n > 1 ? Math.min(U * 0.05, availH * 0.055) : 0;
+  const labelH = frames.some((f) => f.op) ? U * 0.036 : 0;
+  const cellH = Math.max(
+    U * 0.018,
+    Math.min(U * 0.072, (availH - gap * (n - 1) - labelH * n) / (rowsMax * n)),
+  );
+  const cellW = Math.min(U * 0.18, (box.w * 0.9) / Math.max(1, colsMax));
+  const matW = colsMax * cellW;
+  const matH = rowsMax * cellH;
+
+  let y = top + Math.max(0, (availH - (labelH * n + matH * n + gap * (n - 1))) / 2);
+
+  frames.forEach((f, i) => {
+    const at = 0.18 + (n === 1 ? 0 : (i / Math.max(1, n - 1)) * dur * 0.46);
+    const a = easeOut(seg(t, at, at + 0.5));
+    const x0 = box.x + (box.w - matW) / 2;
+
+    if (f.op) {
+      c.save();
+      c.globalAlpha = a;
+      c.font = `700 ${U * 0.026}px ${FONT_UI}`;
+      c.fillStyle = withAlpha(st.accent, 0.9);
+      c.textAlign = 'center';
+      c.textBaseline = 'top';
+      c.fillText(f.op, box.x + box.w / 2, y);
+      c.restore();
+    }
+    const my = y + labelH;
+
+    c.save();
+    c.globalAlpha = a * (i === n - 1 ? 1 : 0.72);
+    c.translate((1 - a) * U * 0.02, 0);
+
+    // 高亮行
+    if (f.hi && f.hi >= 1 && f.hi <= rowsMax) {
+      c.fillStyle = withAlpha(st.accent, 0.16);
+      roundRect(c, x0 - U * 0.014, my + (f.hi - 1) * cellH, matW + U * 0.028, cellH, U * 0.008);
+      c.fill();
+    }
+
+    // 括号
+    const bx = x0 - U * 0.016;
+    const rx = x0 + matW + U * 0.016;
+    const tick = U * 0.011;
+    c.strokeStyle = withAlpha(th.text, 0.55);
+    c.lineWidth = Math.max(1.4, U * 0.0022);
+    c.beginPath();
+    c.moveTo(bx + tick, my - U * 0.006);
+    c.lineTo(bx, my - U * 0.006);
+    c.lineTo(bx, my + matH + U * 0.006);
+    c.lineTo(bx + tick, my + matH + U * 0.006);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(rx - tick, my - U * 0.006);
+    c.lineTo(rx, my - U * 0.006);
+    c.lineTo(rx, my + matH + U * 0.006);
+    c.lineTo(rx - tick, my + matH + U * 0.006);
+    c.stroke();
+
+    // 增广竖线
+    if (f.aug && f.aug > 0 && f.aug < colsMax) {
+      const ax = x0 + (colsMax - f.aug) * cellW;
+      c.strokeStyle = withAlpha(st.accent2, 0.75);
+      c.lineWidth = Math.max(1, U * 0.0018);
+      c.setLineDash([U * 0.008, U * 0.008]);
+      c.beginPath();
+      c.moveTo(ax, my - U * 0.004);
+      c.lineTo(ax, my + matH + U * 0.004);
+      c.stroke();
+      c.setLineDash([]);
+    }
+
+    // 单元格
+    const maxLen = Math.max(...f.rows.flat().map((s) => String(s).length), 1);
+    const fs = Math.min(U * 0.058, cellH * 0.6, ((cellW * 0.92) / Math.max(1, maxLen)) * 1.7);
+    c.fillStyle = th.text;
+    c.font = `600 ${fs}px ${FONT_MATH}`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    f.rows.forEach((row, ri) => {
+      row.forEach((cell, ci) => {
+        const zero = String(cell) === '0';
+        c.fillStyle = zero ? withAlpha(th.text, 0.42) : th.text;
+        c.fillText(String(cell), x0 + ci * cellW + cellW / 2, my + ri * cellH + cellH / 2);
+      });
+    });
+    c.restore();
+
+    y = my + matH + gap;
+  });
+
+  if (scene.note) {
+    const a = easeOut(seg(t, dur * 0.55, dur * 0.55 + 0.6));
+    c.save();
+    c.globalAlpha = a;
+    const ny = box.y + box.h - U * 0.06;
+    c.fillStyle = withAlpha(st.accent, 0.1);
+    roundRect(c, box.x, ny - U * 0.012, box.w, U * 0.062, U * 0.014);
+    c.fill();
+    drawRich(c, scene.note, {
+      x: box.x + U * 0.025, y: ny + U * 0.004, maxW: box.w - U * 0.05,
+      size: U * 0.029, color: st.accent, weight: 600, maxLines: 1,
     });
     c.restore();
   }

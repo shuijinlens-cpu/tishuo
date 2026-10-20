@@ -85,7 +85,11 @@ export default function App() {
   const buildStoryboard = async (q: string): Promise<Storyboard | null> => {
     if (live) {
       try {
-        return await generateStoryboard(settings, stage, q, mode === 'custom' ? plan.trim() : undefined);
+        return await generateStoryboard(
+          settings, stage, q,
+          mode === 'custom' ? plan.trim() : undefined,
+          (msg) => setBusy(msg),
+        );
       } catch (e: any) {
         setToast(`AI 服务出错：${e?.message || e}，改用本机解题`);
       }
@@ -109,7 +113,10 @@ export default function App() {
       setStoryboard(sb);
       setBuffers(null);
       setOcrResult(null);
-      setToast(sb.source === 'local' ? '已用本机解题引擎生成，点播放预览' : '讲解已生成，点播放预览');
+      if (sb.issues && sb.issues.length) setToast(`⚠ ${sb.issues[0]}`);
+      else if (sb.exact) setToast('已用精确代数内核逐步求解（有理数运算，每一步都可核对）');
+      else if (sb.verified) setToast('讲解已生成，全部算式已通过本机复核');
+      else setToast(sb.source === 'local' ? '已用本机解题引擎生成，点播放预览' : '讲解已生成，点播放预览');
     } finally {
       setBusy('');
     }

@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { PROVIDERS, isConfigured, chat } from '../lib/ai';
-import { VOICE_PRESETS, describeBestVoice, previewVoice, waitForVoices } from '../lib/voice';
+import { VOICE_PRESETS, analyzeRecording, describeBestVoice, previewVoice, waitForVoices } from '../lib/voice';
 import { applyPreset } from '../lib/store';
-import type { Settings } from '../lib/types';
+import type { Settings, VoiceProfile } from '../lib/types';
 
 interface Props {
   settings: Settings;
@@ -16,6 +16,10 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
   const [testMsg, setTestMsg] = useState('');
   const [trying, setTrying] = useState('');
   const [voiceNote, setVoiceNote] = useState('');
+  const [recState, setRecState] = useState<'idle' | 'rec' | 'busy'>('idle');
+  const [recErr, setRecErr] = useState('');
+  const recRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
   const preset = PROVIDERS.find((p) => p.id === s.providerId) || PROVIDERS[0];
 
   const set = (patch: Partial<Settings>) => setS((prev) => ({ ...prev, ...patch }));
@@ -40,13 +44,59 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
 
   const tryVoice = async (id: string) => {
     const vp = VOICE_PRESETS.find((x) => x.id === id)!;
-    set({ voicePreset: id });
+    set({ voicePreset: id, useMyVoice: false });
     setTrying(id);
     await waitForVoices();
     setVoiceNote(`正在用「${describeBestVoice(vp)}」试听`);
-    await previewVoice(vp, s.speed);
+    await previewVoice(vp, s.speed, s.pitchShift);
     setTimeout(() => setTrying(''), 9000);
   };
+
+  const startRec = async () => {
+    setRecErr('');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      chunksRef.current = [];
+      const rec = new MediaRecorder(stream);
+      rec.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data);
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setRecState('busy');
+        try {
+          const blob = new Blob(chunksRef.current, { type: rec.mimeType || 'audio/webm' });
+          const profile: VoiceProfile = await analyzeRecording(blob);
+          set({
+            voiceProfile: profile,
+            useMyVoice: true,
+            voicePreset: profile.presetId,
+            pitchShift: profile.pitchScale,
+          });
+          setVoiceNote(
+            `已分析你的声音：中位音高 ${profile.f0} Hz（${profile.gender === 'male' ? '男声' : '女声'}），` +
+            `音域 ${profile.f0Low}~${profile.f0High} Hz，自动匹配「${VOICE_PRESETS.find((v) => v.id === profile.presetId)?.name}」并校准音高 ${profile.pitchScale.toFixed(2)}×`,
+          );
+          await waitForVoices();
+          await previewVoice(VOICE_PRESETS.find((v) => v.id === profile.presetId)!, s.speed, profile.pitchScale);
+        } catch (e: any) {
+          setRecErr(e?.message || '分析失败，请重试');
+        } finally {
+          setRecState('idle');
+        }
+      };
+      rec.start();
+      recRef.current = rec;
+      setRecState('rec');
+      // 最长 25 秒自动停
+      setTimeout(() => rec.state === 'recording' && rec.stop(), 25000);
+    } catch (e: any) {
+      setRecErr(e?.message || '拿不到麦克风权限');
+    }
+  };
+
+  const stopRec = () => recRef.current?.state === 'recording' && recRef.current.stop();
+
+  const teaching = VOICE_PRESETS.filter((v) => v.group === 'teaching');
+  const characters = VOICE_PRESETS.filter((v) => v.group === 'character');
 
   return (
     <div className="modal-mask" onClick={onClose}>
@@ -69,11 +119,68 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
                 onClick={() => tryVoice(s.voicePreset)}
               >▶ 试听当前音色</button>
             </div>
+
+            {/* 我的声音 */}
+            <div className={`voice-card my-voice ${s.useMyVoice ? 'on' : ''}`} style={{ width: '100%', marginBottom: 10 }}>
+              <div className="row between">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span className="vc-emoji">🎤</span>
+                  <div>
+                    <strong>我的声音</strong>
+                    <small>
+                      {s.voiceProfile
+                        ? `音高 ${s.voiceProfile.f0} Hz · ${s.voiceProfile.gender === 'male' ? '男声' : '女声'} · 已校准`
+                        : '录 10 秒左右，自动匹配最接近的音色并校准'}
+                    </small>
+                  </div>
+                </div>
+                {recState === 'rec' ? (
+                  <button className="btn danger sm" onClick={stopRec}>⏹ 停止录音</button>
+                ) : (
+                  <button className="btn ghost sm" onClick={startRec} disabled={recState === 'busy'}>
+                    {recState === 'busy' ? '分析中…' : s.voiceProfile ? '重新录制' : '开始录音'}
+                  </button>
+                )}
+              </div>
+              {recState === 'rec' && (
+                <p className="hint" style={{ marginTop: 8 }}>
+                  🔴 正在录音…请自然地朗读：<b>"同学们好，今天我们来看这道题。已知两个条件，我们先设未知数，再一步一步列式求解。"</b>（说满 10 秒效果最好）
+                </p>
+              )}
+              {s.voiceProfile && (
+                <label className="check" style={{ marginTop: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={!!s.useMyVoice}
+                    onChange={(e) => set({ useMyVoice: e.target.checked })}
+                  />
+                  <span>讲解时使用我的声音画像（自动选音色 + 按你的音高校准）</span>
+                </label>
+              )}
+              {recErr && <p className="hint" style={{ color: '#c0392b' }}>{recErr}</p>}
+            </div>
+
             <div className="voice-grid">
-              {VOICE_PRESETS.map((v) => (
+              {teaching.map((v) => (
                 <button
                   key={v.id}
-                  className={`voice-card ${s.voicePreset === v.id ? 'on' : ''}`}
+                  className={`voice-card ${!s.useMyVoice && s.voicePreset === v.id ? 'on' : ''}`}
+                  onClick={() => tryVoice(v.id)}
+                >
+                  <span className="vc-emoji">{v.emoji}</span>
+                  <strong>{v.name}</strong>
+                  <small>{v.desc}</small>
+                  {trying === v.id && <em className="vc-playing">正在试听…</em>}
+                </button>
+              ))}
+            </div>
+
+            <p className="label" style={{ marginTop: 12 }}>角色风格音色</p>
+            <div className="voice-grid">
+              {characters.map((v) => (
+                <button
+                  key={v.id}
+                  className={`voice-card ${!s.useMyVoice && s.voicePreset === v.id ? 'on' : ''}`}
                   onClick={() => tryVoice(v.id)}
                 >
                   <span className="vc-emoji">{v.emoji}</span>
@@ -87,6 +194,7 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
             <p className="hint">
               系统音色里带「自然 / Online / Neural」的是真・神经网络发音，明显不像机器。
               电脑端 Edge 效果最好（晓晓、云希）；手机端建议用 Android 系统自带的「Google 语音服务」。
+              角色音色是<b>风格化声线</b>（动画主角感、电影旁白感…），接云端人声后会更接近影视配音。
             </p>
           </section>
 
@@ -106,7 +214,8 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
             </div>
             <p className="hint">
               本机音色免费、随点随听，但<strong>录不进视频</strong>（浏览器不允许抓取系统语音）；
-              要导出带人声的视频，用云端人声（CosyVoice / gpt-4o-mini-tts 接近真人，还能复刻音色）。
+              要导出带人声的视频，用云端人声（CosyVoice / gpt-4o-mini-tts 接近真人）。
+              开了「我的声音」后，云端配音会自动带上你录音里分析出的音色特征描述。
             </p>
           </section>
 
@@ -246,6 +355,16 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
               <div className="seg">
                 {[0.85, 1, 1.15, 1.3].map((v) => (
                   <button key={v} className={s.speed === v ? 'on' : ''} onClick={() => set({ speed: v })}>{v}×</button>
+                ))}
+              </div>
+            </div>
+            <div className="row between mt12">
+              <span className="label">音高</span>
+              <div className="seg">
+                {[0.9, 1, 1.1].map((v) => (
+                  <button key={v} className={Math.abs((s.pitchShift || 1) - v) < 0.01 ? 'on' : ''} onClick={() => set({ pitchShift: v })}>
+                    {v === 0.9 ? '低沉' : v === 1 ? '标准' : '清亮'}
+                  </button>
                 ))}
               </div>
             </div>

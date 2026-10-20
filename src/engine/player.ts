@@ -1,6 +1,6 @@
 import type { Scene, Settings, Storyboard } from '../lib/types';
 import { estimateDuration, renderScene, type RenderOpts } from './render';
-import { getPreset, Narrator, waitForVoices } from '../lib/voice';
+import { Narrator, resolveVoice, waitForVoices } from '../lib/voice';
 
 export interface TimelineItem {
   scene: Scene;
@@ -81,8 +81,9 @@ export class Player {
     this.render(this.t);
     // 提前把系统音色列表读出来，避免第一屏开口时没声音（voices 是异步加载的）
     if (settings.ttsEngine === 'browser') waitForVoices().catch(() => {});
-    if (this.narrator) this.narrator.setVoice(getPreset(settings.voicePreset));
-    else this.narrator = new Narrator({ preset: getPreset(settings.voicePreset), speed: settings.speed });
+    const vv = resolveVoice(settings);
+    if (this.narrator) this.narrator.setVoice(vv.preset, vv.pitchShift);
+    else this.narrator = new Narrator({ preset: vv.preset, speed: settings.speed, pitchShift: vv.pitchShift });
   }
 
   private renderOpts(): RenderOpts {
@@ -176,7 +177,8 @@ export class Player {
     const settings = this.cfg!.settings;
     // 用断句 + 韵律的朗读器，句间留白、问句升调，避免机器连读
     if (!this.narrator) {
-      this.narrator = new Narrator({ preset: getPreset(settings.voicePreset), speed: settings.speed });
+      const vv = resolveVoice(settings);
+      this.narrator = new Narrator({ preset: vv.preset, speed: settings.speed, pitchShift: vv.pitchShift });
     }
     this.narrator.speak(it.scene.narration);
   }

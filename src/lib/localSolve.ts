@@ -1,5 +1,6 @@
 import type { Scene, Stage, Storyboard } from './types';
 import { compileExpr } from './math';
+import { tryExactSolve } from './algebra';
 
 /**
  * 本地解题器：不联网、不要 Key，覆盖拍照题里最常见的一类——
@@ -336,7 +337,7 @@ function tryArithmetic(q: string, stage: Stage): Storyboard | null {
   }
   if (!Number.isFinite(value)) return null;
   const pf = prettyFraction(value);
-  const shown = pf ? `${pf}（约 ${niceNum(value)}）` : niceNum(value);
+  const shown = pf || niceNum(value);
   const scenes: Scene[] = [
     {
       type: 'title',
@@ -379,6 +380,10 @@ export function tryLocalSolve(question: string, stage: Stage): Storyboard | null
   const raw = (question || '').trim();
   if (!raw) return null;
   const q = raw.replace(/[？?。！!]/g, '');
+
+  // 0. 线性方程组 / 矩阵化简：走精确代数内核（有理数消元，逐步行变换）
+  const exact = tryExactSolve(raw, stage);
+  if (exact) return exact;
 
   // 1. 方程（含等号且出现 x）
   if (/=/.test(q) && /x/i.test(q)) {

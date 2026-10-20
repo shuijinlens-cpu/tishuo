@@ -2,6 +2,9 @@ import type { ChatMessage, Scene, Settings, Stage, Storyboard, TtsProtocol } fro
 import { compileExpr } from './math';
 import { localOcr, type OcrProgress, type OcrResult } from './ocr';
 import { cloudTts } from './voice';
+import { looksEnglish, stripChoiceOptions, isComputationHeavy } from './question';
+import { verifyStoryboard } from './verify';
+import { tryExactSolve } from './algebra';
 
 /* ---------------- 服务商预设 ---------------- */
 
@@ -112,6 +115,9 @@ export const DEFAULT_SETTINGS: Settings = {
   ttsProtocol: 'openai',
   voicePreset: 'teacher-female',
   voiceStyle: '',
+  voiceProfile: null,
+  useMyVoice: false,
+  pitchShift: 1,
   ocrEngine: 'auto',
   theme: 'night',
   ratio: '16:9',
@@ -196,11 +202,37 @@ export async function chat(
 
 /* ---------------- 识题 ---------------- */
 
-const OCR_PROMPT = `你是题目录入助手。请把图片中的题目**完整准确地**转写成纯文本：
-1. 保留题号、条件、图形描述（如"如图，△ABC 中…"）、选项、小问；
-2. 数学式子用 Unicode 纯文本表示（x²、√3、≤、∠ABC、△、∥、⊥、π）；不要用 LaTeX；
-3. 如果是图形题，用一句话补充图形里的已知标注（如"AB=AC，∠A=40°"）；
-4. 不要解题，不要写答案，只输出题目本身。若图中有多道题，只输出最完整的一道。`;
+const OCR_PROMPT = `你是题目录入助手。请把图片中的题目完整准确地转写成纯文本，供后续"按解答题逐步讲解"使用。
+
+【语言】
+- 题目若是英文或其他外语，**译成规范的学术中文**：数学术语按国内教材标准译法（let→设，evaluate→求，prove→证明，hence→因此，integer→整数，matrix→矩阵，row echelon form→行阶梯形，eigenvalue→特征值）。
+- 数字、变量名、公式结构原样保留，不翻译符号，不改变题意。
+
+【选择题】
+- **只保留题干**：删掉所有选项（A. / B. / C. / D. / (A) / ①②③④ 形式的选项内容）以及"下列选项中正确的是"后面的选项部分。
+- 题干里的条件、数据、图形说明必须一字不漏地保留。
+
+【其它】
+1. 保留题号与小问（(1)(2)），保留"如图，△ABC 中…"这类条件，并把图中标注补成一句（如"AB=AC，∠A=40°"）。
+2. 数学式子用 Unicode 纯文本：x²、√3、≤、∠ABC、△、∥、⊥、π、∫、Σ、A⁻¹；不要用 LaTeX、不要 $。
+3. 矩阵按行转写，一行一个矩阵行，数字用空格分隔，例如：
+   1 2 3
+   4 5 6
+4. 不要解题、不要写答案、不要解释。若图中有多道题，只输出最完整的一道。`;
+
+/** 纯翻译（端侧 OCR 只认字形、不认语言，英文题需要这一步） */
+const TRANSLATE_PROMPT = `你是数学题的学术翻译。把用户给的题目译成规范中文：
+- 数学术语按国内教材标准（row echelon form → 行阶梯形，eigenvalue → 特征值，derivative → 导数）；
+- 公式、变量、数字原样保留；
+- 只输出译文，不要解释，不要解题。`;
+
+export async function translateQuestion(s: Settings, text: string): Promise<string> {
+  const out = await chat(s, [
+    { role: 'system', content: TRANSLATE_PROMPT },
+    { role: 'user', content: text },
+  ]);
+  return out.replace(/^```[\s\S]*?\n|```$/g, '').trim();
+}
 
 export async function ocrQuestion(s: Settings, dataUrl: string): Promise<string> {
   const text = await chat(
@@ -237,7 +269,7 @@ export async function recognizeQuestion(
       const text = await ocrQuestion(s, dataUrl);
       onProgress?.({ pct: 0.96, label: '整理题目' });
       return {
-        text,
+        text: stripChoiceOptions(text),
         confidence: 95,
         engine: 'vision',
         warn: text.replace(/\s/g, '').length < 8 ? '识别内容偏少，请确认是否拍到完整题目' : undefined,
@@ -248,7 +280,20 @@ export async function recognizeQuestion(
       return { ...local, warn: `${local.warn || ''}（AI 识题失败：${e?.message || e}，已改用本机识别）`.trim() };
     }
   }
-  return localOcr(dataUrl, onProgress);
+
+  const local = await localOcr(dataUrl, onProgress);
+  let text = stripChoiceOptions(local.text);
+  let warn = local.warn;
+  // 英文题：端侧 OCR 只认字形，配了文本模型就补一步学术翻译
+  if (looksEnglish(text) && isConfigured(s)) {
+    onProgress?.({ pct: 0.97, label: '学术翻译中' });
+    try {
+      text = stripChoiceOptions(await translateQuestion(s, text));
+    } catch (e: any) {
+      warn = `${warn || ''}（英文题翻译失败：${e?.message || e}）`.trim();
+    }
+  }
+  return { ...local, text, warn };
 }
 
 /* ---------------- 分镜生成 ---------------- */
@@ -259,8 +304,9 @@ const SCHEMA_DOC = `输出必须是一个 JSON 对象（不要 Markdown 代码�
   "answer": "最终答案（简洁，含关键结论）",
   "scenes": [
     { "type": "title", "title": "标题", "subtitle": "一句话副标题", "narration": "口播稿" },
-    { "type": "steps", "title": "可选小标题", "steps": [{"text":"步骤（可用 **强调**）","note":"可选补充"}], "note": "可选底部提示", "narration": "口播稿" },
-    { "type": "formula", "title": "可选", "math": "公式（可含 \\n 换行）", "note": "解释", "tip": "口诀/提醒", "narration": "口播稿" },
+    { "type": "steps", "title": "可选小标题", "steps": [{"text":"这一步在做什么（书面语）","math":"这一步的具体算式","note":"可选补充"}], "note": "可选底部提示", "narration": "口播稿" },
+    { "type": "formula", "title": "可选", "math": "公式（可含 \\n 换行，一行一个变形）", "note": "解释", "tip": "口诀/提醒", "narration": "口播稿" },
+    { "type": "matrix", "title": "可选", "mats": [{"op":"第 2 行 − 3 × 第 1 行","rows":[["1","2","3","6"],["0","-7","-5","-9"],["0","5","-4","-7"]],"aug":1,"hi":2}], "note": "可选提示", "narration": "口播稿" },
     { "type": "graph", "title": "可选", "view": [-5,5,-8,6], "curves": [{"expr":"x^2-2x-3","label":"y=x²-2x-3","color":"#5EE7C4"}], "vlines": [{"x":1,"label":"对称轴 x=1"}], "hlines": [{"y":-4,"label":"最小值 -4"}], "points": [{"x":1,"y":-4,"label":"顶点(1,-4)"}], "area": {"expr":"x^2-2x-3","from":0,"to":2}, "narration": "口播稿" },
     { "type": "numberline", "title": "可选", "min": 0, "max": 1, "marks": [{"value":0.5,"label":"1/2"}], "range": {"from":0.2,"to":0.6,"label":"解集"}, "narration": "口播稿" },
     { "type": "geometry", "title": "可选", "pts": [{"id":"A","x":50,"y":12},{"id":"B","x":14,"y":82},{"id":"C","x":86,"y":82}], "segs": [{"a":"A","b":"B"},{"a":"B","b":"C"},{"a":"C","b":"A","label":"1"}], "angles": [{"at":"A","from":"B","to":"C","label":"60°"}], "ghost": {"rotate":{"center":"A","deg":60}}, "note": "可选提示", "narration": "口播稿" },
@@ -273,31 +319,47 @@ const SCHEMA_DOC = `输出必须是一个 JSON 对象（不要 Markdown 代码�
 
 字段规则：
 - 每屏都要 narration（口播稿，口语，20~70 字），不要念符号，要读成中文（写"x 的平方"，而不是"x^2"）。
-- 数学表达式一律 Unicode 纯文本：x²、√(b²-4ac)、≤、≥、≠、≈、∫、Σ、π、θ、∴、⇒、△、∠。禁止 LaTeX、禁止 $。
+- math 一律 Unicode 纯文本：x²、√(b²-4ac)、≤、≥、≠、≈、∫、Σ、π、θ、∴、⇒、△、∠。禁止 LaTeX、禁止 $。
+- \`steps\` 里**每一步都必须给 math**（具体算式），不许只给文字描述。
+- \`matrix\` 的 rows 是字符串二维数组，aug 表示从右边数第几列是常数列（用于画竖线），hi 是高亮行号（1 起）。
 - graph 的 expr 只能用 x、数字、+ - * / ^ ( )、sin cos tan sqrt abs ln log exp，view 为四个数字。
 - geometry 坐标范围 0~100（y 轴向下），点不要贴边；辅助线用 dashed:true，并按顺序加 delay。
 - 强调重点用 **两个星号** 包裹。
-- 屏数 4~7 屏，节奏紧凑；不要出现"大家好""下面我们来看"这类废话。`;
+
+【铁律：正确性优先，错一个数整段作废】
+1. 下笔前先把题完整解一遍并逐步验算；没有把握的数字宁可再算一遍，也不许猜。
+2. **不许跳步**。禁止"化简得""由此可得""易知""整理得"之后直接跳到结果——每一个变形都要单独一行，并在 math 里写出这一步的完整算式。
+3. 纯计算、化简、解方程（组）、求导、积分、极限、矩阵变换类题目：steps 或 matrix 屏不少于 2 屏，把中间结果全部列出来；同一屏里的每个中间量都必须能由上一行直接算出。
+4. 线性方程组、矩阵化行阶梯形：必须用 matrix 屏，把每一次初等行变换的操作（第几行怎么变）写在 op 里，把变换后的**完整矩阵**写进 rows。禁止凭记忆写"最终矩阵"。
+5. 结论屏之前必须有一屏"代回验算"，把结果代回原式核对，写明左边等于右边。
+6. 选择题（如果题面里还有选项）按解答题讲：给出完整推导，再用一句话说明哪个选项对、其它为什么错。
+7. 最终答案屏的 answer 字段必须与推导结果完全一致，不能出现"约为""大概是"。
+- 屏数 5~9 屏，节奏紧凑；不要出现"大家好""下面我们来看"这类废话。`;
 
 const STAGE_STYLE: Record<Stage, string> = {
   primary: `受众是小学生（6~12 岁）。要求：
 - **趣味优先**：多用拟人、比喻、生活场景（分披萨、分糖果、小动物排队），语气亲切活泼，可以有"哇""注意啦"这样的语气词；
 - **必须可视化**：优先用 objects（🍎🍬🐰 实物）和 pie/strip（饼图、分割条）表达数量关系，让孩子"看见"算式；
 - 每屏只讲一个小点，语言短句为主，不出现"设""恒成立""判别式"等术语；
-- 结论屏给一句朗朗上口的小口诀。`,
+- 结论屏给一句朗朗上口的小口诀。
+- 即使小学题，也要把每一步算式写清楚（steps 的 math），不能只给答案。`,
   junior: `受众是初中生。要求：
 - **代数必须数形结合**：讲方程/函数/不等式时，用 graph 或 numberline 把式子变成图像，让"代数结论"在图上看得见（交点、顶点、区间）；
 - **几何必须有动画**：用 geometry 画图，辅助线 dashed + delay 逐条生长；涉及旋转/翻折/平移时用 ghost.rotate / ghost.flip 演示变换过程；
 - 讲解逻辑：先给直觉（图形）→ 再给严格步骤 → 最后给易错点；
-- 可以有"秒杀"技巧，但必须说明为什么成立。`,
+- 可以有"秒杀"技巧，但必须说明为什么成立。
+- **计算步骤一步都不能省**：移项、合并、系数化为 1 都要单独一行写出算式。`,
   senior: `受众是高中生。要求：
 - **代数部分强可视化**：函数对称性、单调性、最值、切线、区域面积等，用 graph 把抽象关系画出来（对称轴 vlines、关键点 points、区域 area）；
 - **几何部分强动画**：建系、辅助线、旋转、投影用 geometry 动态呈现；
 - 允许"秒杀口诀/套路"，但要用一屏讲清它的原理来源；
-- 步骤严谨，符号规范，结论要能直接抄进答题卡。`,
+- 步骤严谨，符号规范，结论要能直接抄进答题卡。
+- **每一步推导都要有式子**：变形、代入、化简各占一行，禁止跳步。`,
   college: `受众是大学生。要求：
 - **不要花哨动画**，不要 emoji 堆砌，风格克制、板书感；
 - 主要用 steps（原理 → 推导 → 步骤）和 formula（关键式子），必要时最多一屏 graph 辅助直觉；
+- **线性代数/矩阵题必须用 matrix 屏**，逐次行变换、每次变换后的完整矩阵都要画出来；
+- **推导一步一行**：换元、求导、积分、代入上下限都单独成行，math 字段写完整式子；
 - 讲清"为什么这一步成立"（定理条件、等价变形），再给"标准做法"；
 - 结尾给适用条件与常见坑。`,
 };
@@ -306,6 +368,7 @@ export function buildStoryboardPrompt(
   stage: Stage,
   question: string,
   plan?: string,
+  draft?: string,
 ): ChatMessage[] {
   const sys = `你是一位顶尖的数学/理科讲解视频编导兼老师，负责把一个题目拆成"分镜脚本"，供程序渲染成讲解动画。
 
@@ -315,25 +378,54 @@ ${SCHEMA_DOC}
 
 只输出 JSON。`;
 
-  const user = plan
-    ? `【学段】${stageName(stage)}
+  const common = `【学段】${stageName(stage)}
 【题目】
 ${question}
+${looksEnglish(question) ? '\n（题目是英文：先在脑中译成中文理解；分镜里的标题、步骤、旁白一律用中文，变量名保持原样。）\n' : ''}
+【标准解答草稿 —— 必须与之完全一致，不得改动任何数字、符号或中间结果】
+${draft || '（没有草稿，请自己完整解一遍再写分镜）'}
 
-【我的讲解思路（必须严格遵循）】
+【讲解详细度】${plan ? '按用户思路' : '细讲模式'}
+- 没有用户指定思路时采用**细讲**：每个变形都解释依据，计算类题目至少 2 屏专门列步骤，宁可多一屏也不跳步。
+- 有用户思路时，严格按用户顺序与重点编排，但完整的计算步骤必须保留，不许因为"用户没提"而省略中间算式。`;
+
+  const user = plan
+    ? `${common}
+
+【我的讲解思路（必须严格遵循顺序与重点）】
 ${plan}
 
-要求：完全按照上面的思路顺序和重点来编排分镜，不得增加用户没提到的步骤，不得改变讲解顺序；如果思路里有"先讲 A 再讲 B"，分镜就必须先 A 后 B。可以补充必要的过渡语。
+要求：完全按上面的思路顺序编排分镜，不改变讲解顺序、不加用户没提到的重点；
+但"计算步骤"不算额外重点——每一步算式必须保留并写进 math 字段。
+草稿里的每个中间结果都要在分镜里出现一次，最后一屏必须与草稿答案一致。
 请输出 JSON。`
-    : `【学段】${stageName(stage)}
-【题目】
-${question}
+    : `${common}
 
-请先在心里完整解出这道题，确认答案无误，再设计分镜。请输出 JSON。`;
+请输出 JSON。`;
 
   return [
     { role: 'system', content: sys },
     { role: 'user', content: user },
+  ];
+}
+
+/** 第一遍：只要一份严格、可核对的解答草稿（不含讲解话术） */
+export function buildDraftPrompt(stage: Stage, question: string): ChatMessage[] {
+  return [
+    {
+      role: 'system',
+      content: `你是极其严谨的${stageName(stage)}数学老师。请给出这道题的完整解答草稿。
+
+要求：
+1. 一步一行，写成"这一步做什么：具体算式"；
+2. **绝不跳步**：移项、合并同类项、代入、约分、求导、积分、每一次初等行变换都要单独一行；
+3. 线性方程组 / 矩阵题：每一步写出完整的增广矩阵（用 [ ] 包起来，数字用空格分隔）；
+4. 用 Unicode 纯文本数学（x²、√3、∫、Σ），不要 LaTeX；
+5. 最后单独一行写：答案：……
+6. 写完后代回原式验算一遍，有矛盾就重算。
+只输出草稿，不要讲解话术，不要客套。`,
+    },
+    { role: 'user', content: question },
   ];
 }
 
@@ -360,7 +452,7 @@ export function parseJsonLoose(text: string): any {
 }
 
 const VALID_TYPES = new Set([
-  'title', 'steps', 'formula', 'graph', 'numberline',
+  'title', 'steps', 'formula', 'matrix', 'graph', 'numberline',
   'geometry', 'pie', 'objects', 'compare', 'conclusion',
 ]);
 
@@ -374,6 +466,7 @@ export function normalizeScene(raw: any): Scene | null {
   let type = String(raw.type || '').trim();
   if (!VALID_TYPES.has(type)) {
     if (raw.math) type = 'formula';
+    else if (raw.mats) type = 'matrix';
     else if (raw.steps) type = 'steps';
     else if (raw.curves) type = 'graph';
     else type = 'formula';
@@ -389,10 +482,35 @@ export function normalizeScene(raw: any): Scene | null {
   }
 
   if (Array.isArray(raw.steps)) {
-    scene.steps = raw.steps.slice(0, 6).map((s: any) => ({
+    scene.steps = raw.steps.slice(0, 7).map((s: any) => ({
       text: String(typeof s === 'string' ? s : s?.text ?? '').trim(),
       note: s?.note ? String(s.note) : undefined,
-    })).filter((s: any) => s.text);
+      math: s?.math ? String(s.math).trim() : undefined,
+    })).filter((s: any) => s.text || s.math);
+  }
+
+  // 矩阵屏：把模型可能写成一维/数字/字符串的各种形态都收敛成 rows: string[][]
+  if (Array.isArray(raw.mats) && raw.mats.length) {
+    const parseRows = (v: any): string[][] => {
+      if (typeof v === 'string') {
+        return v.split(/\n|;/).map((l) => l.replace(/^\[|\]$/g, '').replace(/[|,，]/g, ' ')
+          .trim().split(/\s+/).filter(Boolean));
+      }
+      if (Array.isArray(v)) {
+        if (v.length && Array.isArray(v[0])) return v.map((r: any) => r.map((c: any) => String(c)));
+        return [v.map((c: any) => String(c))];
+      }
+      return [];
+    };
+    scene.mats = raw.mats.slice(0, 5).map((f: any) => {
+      const rows = parseRows(f?.rows ?? f?.matrix ?? f?.mat);
+      return {
+        op: f?.op ? String(f.op) : undefined,
+        rows,
+        aug: f?.aug != null ? Math.max(0, Math.round(num(f.aug, 0))) : undefined,
+        hi: f?.hi != null ? Math.round(num(f.hi, 0)) : undefined,
+      };
+    }).filter((f: any) => f.rows.length && f.rows.every((r: string[]) => r.length));
   }
 
   if (Array.isArray(raw.curves)) {
@@ -534,10 +652,50 @@ export async function generateStoryboard(
   stage: Stage,
   question: string,
   plan?: string,
+  onStep?: (msg: string) => void,
 ): Promise<Storyboard> {
-  const raw = await chat(s, buildStoryboardPrompt(stage, question, plan));
-  const data = parseJsonLoose(raw);
-  return normalizeStoryboard(data, stage, question, plan ? 'custom' : 'ai');
+  // ① 能完全判定的题（线性方程组 / 矩阵化简）：直接用精确内核，绝不让模型手算
+  const exact = tryExactSolve(question, stage);
+  if (exact) {
+    onStep?.('已用精确代数内核逐步求解（有理数运算，不会算错）');
+    return { ...exact, question, issues: [] };
+  }
+
+  // ② 第一遍：先要一份可核对的完整解答草稿（这一步专治"跳步"和"算错"）
+  let draft = '';
+  if (isConfigured(s)) {
+    try {
+      onStep?.('先独立解一遍，生成标准解答草稿…');
+      draft = (await chat(s, buildDraftPrompt(stage, question))).trim();
+      if (draft.length > 4000) draft = draft.slice(0, 4000);
+    } catch {
+      /* 草稿失败不影响主流程 */
+    }
+  }
+
+  // ③ 第二遍：按草稿写分镜
+  onStep?.('编排分镜…');
+  const raw = await chat(s, buildStoryboardPrompt(stage, question, plan, draft));
+  const sb = normalizeStoryboard(parseJsonLoose(raw), stage, question, plan ? 'custom' : 'ai');
+
+  // ④ 复核：逐条重算分镜里的数字等式，并用精确内核比对答案
+  onStep?.('复核计算…');
+  const v = verifyStoryboard(sb, question);
+  sb.verified = v.issues.length === 0;
+  sb.issues = v.issues;
+
+  // 答案对不上 → 用精确结果替换（正确性优先，宁可换掉整段分镜）
+  if (v.issues.some((x) => x.includes('答案与精确计算不一致')) && v.exactStoryboard) {
+    const fixed: Storyboard = {
+      ...v.exactStoryboard,
+      question,
+      issues: [`模型算错了，已用精确计算替换（${v.exactAnswer}）`],
+      verified: true,
+    };
+    return fixed;
+  }
+
+  return sb;
 }
 
 /* ---------------- 语音合成 ---------------- */
