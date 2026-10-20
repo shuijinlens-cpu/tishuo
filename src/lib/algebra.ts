@@ -81,6 +81,24 @@ export function qStr(v: Q): string {
   return `${x.n}/${x.d}`;
 }
 
+/** 变量名转 LaTeX 下标写法：x1 → x_{1}（math 字段用，视频里排成真下标） */
+export function varTex(v: string): string {
+  const m = v.match(/^([a-zA-Z])(\d+)$/);
+  return m ? `${m[1]}_{${m[2]}}` : v;
+}
+
+/** 分数转 LaTeX：3/2 → \frac{3}{2}（math 字段用，播放器排成竖排分数） */
+export function fracTex(v: Q): string {
+  const x = normQ(v);
+  if (x.d === ONE) return String(x.n);
+  return `\\frac{${x.n}}{${x.d}}`;
+}
+
+/** 口播读法：3/2 → "2 分之 3"（中文分数的规范读法） */
+export function speakFrac(s: string): string {
+  return s.replace(/(-?\d+)\s*\/\s*(\d+)/g, (_m, a, b) => `${b} 分之 ${a}`);
+}
+
 /* ---------------- 矩阵与初等行变换 ---------------- */
 
 export type Mat = Q[][];
@@ -358,8 +376,10 @@ export interface LinearSolution {
   freeVars: string[];
   ops: RowOp[];
   rref: Mat;
-  /** 回代/参数化解的展示行 */
+  /** 回代/参数化解的展示行（纯文本，口播与答案用） */
   solutionLines: string[];
+  /** 同上，但 LaTeX 风格（视频 math 字段用，排成真下标/竖排分数） */
+  solutionTex: string[];
   /** 验算：把解代回原方程，每行一句 */
   checkLines: string[];
 }
@@ -381,6 +401,7 @@ export function solveLinearSystem(sys: LinearSystem): LinearSolution {
         ops,
         rref,
         solutionLines: ['出现 0 = 非零 的矛盾方程', '方程组无解'],
+        solutionTex: ['出现 0 = 非零 的矛盾方程', '方程组无解'],
         checkLines: [],
       };
     }
@@ -398,6 +419,7 @@ export function solveLinearSystem(sys: LinearSystem): LinearSolution {
       values[c] = rref[i][n];
     });
     const solutionLines = sys.vars.map((v, i) => `${v} = ${qStr(values[i])}`);
+    const solutionTex = sys.vars.map((v, i) => `${varTex(v)} = ${fracTex(values[i])}`);
     const checkLines = sys.texts.map((t, i) => {
       const row = sys.aug[i];
       let lhs = Q0;
@@ -413,6 +435,7 @@ export function solveLinearSystem(sys: LinearSystem): LinearSolution {
       ops,
       rref,
       solutionLines,
+      solutionTex,
       checkLines,
     };
   }
@@ -420,21 +443,26 @@ export function solveLinearSystem(sys: LinearSystem): LinearSolution {
   // 有无穷多解：用自由变量表示主元变量
   const tName = ['s', 't', 'u'].filter((x) => !sys.vars.includes(x))[0] || 't';
   const lines: string[] = [];
+  const texLines: string[] = [];
   for (let i = 0; i < n; i++) {
     const p = pivotOf[i];
     if (p === undefined) {
       lines.push(`${sys.vars[i]} = ${tName}${freeVars.indexOf(sys.vars[i]) + 1}（自由）`);
+      texLines.push(`${varTex(sys.vars[i])} = ${tName}_{${freeVars.indexOf(sys.vars[i]) + 1}}（自由）`);
       continue;
     }
     const parts = [qStr(rref[p][n])];
+    const texParts = [fracTex(rref[p][n])];
     freeVars.forEach((fv, k) => {
       const coeff = rref[p][sys.vars.indexOf(fv)];
       if (qIsZero(coeff)) return;
       const c = qNeg(coeff);
       const s = qStr(c);
       parts.push(`${s.startsWith('-') ? '−' : '+'} ${s.replace('-', '')}${tName}${k + 1}`);
+      texParts.push(`${s.startsWith('-') ? '−' : '+'} ${fracTex(c)}${tName}_{${k + 1}}`);
     });
     lines.push(`${sys.vars[i]} = ${parts.join(' ')}`);
+    texLines.push(`${varTex(sys.vars[i])} = ${texParts.join(' ')}`);
   }
 
   return {
@@ -445,6 +473,7 @@ export function solveLinearSystem(sys: LinearSystem): LinearSolution {
     ops,
     rref,
     solutionLines: lines,
+    solutionTex: texLines,
     checkLines: [],
   };
 }
@@ -504,6 +533,11 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+/** 大学学段：方法按同济大学教材的讲法 */
+function tongjiHint(stage: Stage): string {
+  return stage === 'college' ? '（按同济大学《线性代数》：对增广矩阵施行初等行变换）' : '';
+}
+
 /**
  * 线性方程组 → 分镜（增广矩阵消元，每一步都画出来）
  */
@@ -515,8 +549,8 @@ export function buildLinearSystemStoryboard(sys: LinearSystem, stage: Stage): St
   scenes.push({
     type: 'title',
     title: n === 2 ? '解二元一次方程组' : n === 3 ? '解三元一次方程组' : '解线性方程组',
-    subtitle: `${sys.vars.length} 个未知量 ${speakVarList(sys.vars)}`,
-    narration: `这道题有 ${n} 个未知量，${speakVarList(sys.vars)}，一共 ${sys.equations.length} 个方程。我们用增广矩阵做消元，一步一步把它化成最简形。`,
+    subtitle: `${sys.vars.length} 个未知量 ${speakVarList(sys.vars)}${stage === 'college' ? ' · 同济《线性代数》方法' : ''}`,
+    narration: `这道题有 ${n} 个未知量，${speakVarList(sys.vars)}，一共 ${sys.equations.length} 个方程。我们用增广矩阵做消元，一步一步把它化成最简形。${stage === 'college' ? '这是同济大学《线性代数》里解线性方程组的标准做法：对增广矩阵做初等行变换，化成行最简形后直接读出解。' : ''}`,
   });
 
   scenes.push({
@@ -551,7 +585,7 @@ export function buildLinearSystemStoryboard(sys: LinearSystem, stage: Stage): St
           ]
         : []),
     ],
-    note: '只用三种操作：交换两行、某行乘一个非零数、某行加上另一行的倍数',
+    note: `只用三种初等行变换：交换两行、某行乘一个非零数、某行加上另一行的倍数${tongjiHint(stage)}`,
     narration:
       '接下来只允许三种操作：交换两行、把某一行乘一个非零的数、把某一行加上另一行的若干倍。这三种操作都不改变方程组的解，所以我们放心地做。',
   });
@@ -580,19 +614,19 @@ export function buildLinearSystemStoryboard(sys: LinearSystem, stage: Stage): St
     scenes.push({
       type: 'formula',
       title: '第三步：从最简形直接读出解',
-      math: sol.solutionLines.join('\n'),
+      math: sol.solutionTex.join('\n'),
       note: '最简形里每个主元列只有一个 1，其余全 0，所以常数项就是解',
       narration: `化成最简形以后，每个未知数所在的那一列只剩下一个 1，最后一列的数就是它的值。所以 ${sol.solutionLines
-        .map((l) => `${l.split('=')[0].trim()} 等于 ${l.split('=')[1].trim()}`)
+        .map((l) => `${l.split('=')[0].trim()} 等于 ${speakFrac(l.split('=')[1].trim())}`)
         .join('，')}。`,
     });
     scenes.push({
       type: 'conclusion',
       title: '代回原方程验算',
-      math: sol.solutionLines.join('，'),
+      math: sol.solutionTex.join('，'),
       subtitle: '每一条原方程都成立，解才可靠',
       narration: `最后一定要代回去验算。${sol.checkLines
-        .map((l) => l.replace(/：/g, '，'))
+        .map((l) => speakFrac(l.replace(/：/g, '，')))
         .join('。')}。全部成立，说明这组解是对的。`,
     });
   } else if (sol.kind === 'none') {
@@ -607,8 +641,8 @@ export function buildLinearSystemStoryboard(sys: LinearSystem, stage: Stage): St
     scenes.push({
       type: 'formula',
       title: '方程组有无穷多解',
-      math: sol.solutionLines.join('\n'),
-      note: `自由未知量：${sol.freeVars.join('、')}`,
+      math: sol.solutionTex.join('\n'),
+      note: `自由未知量：${sol.freeVars.join('、')}${stage === 'college' ? '（同济《线性代数》：通解 = 特解 + 基础解系的线性组合）' : ''}`,
       narration: `消元后出现了全是零的行，说明有效方程比未知数少，方程组有无穷多组解。把 ${sol.freeVars.join(
         '、',
       )} 当自由未知量，其余未知数用它们表示出来，就是通解。`,
@@ -649,8 +683,8 @@ export function buildMatrixStoryboard(m: Mat, stage: Stage, aug = 0): Storyboard
     {
       type: 'title',
       title: aug ? '增广矩阵的行阶梯化简' : '矩阵化为行最简形',
-      subtitle: `${m.length} 行 × ${cols} 列`,
-      narration: `这是一个 ${m.length} 行 ${cols} 列的矩阵。我们按列从左到右，把每一列的主元化成 1，并把主元上下的数都消成 0。`,
+      subtitle: `${m.length} 行 × ${cols} 列${stage === 'college' ? ' · 同济《线性代数》：初等行变换' : ''}`,
+      narration: `这是一个 ${m.length} 行 ${cols} 列的矩阵。我们按列从左到右，把每一列的主元化成 1，并把主元上下的数都消成 0。${stage === 'college' ? '这就是同济大学《线性代数》里把矩阵化为行阶梯形、再化为行最简形的标准过程。' : ''}`,
     },
     {
       type: 'matrix',
@@ -674,8 +708,8 @@ export function buildMatrixStoryboard(m: Mat, stage: Stage, aug = 0): Storyboard
   scenes.push({
     type: 'conclusion',
     title: '化简结果',
-    subtitle: `秩 r = ${rank}，主元列：第 ${pivots.map((c) => c + 1).join('、')} 列`,
-    narration: `这样每一行的第一个非零元都是 1，并且它所在列的其它位置全是 0，这就是行最简形。非零行有 ${rank} 行，所以矩阵的秩是 ${rank}。`,
+    subtitle: `秩 r(A) = ${rank}，主元列：第 ${pivots.map((c) => c + 1).join('、')} 列`,
+    narration: `这样每一行的第一个非零元都是 1，并且它所在列的其它位置全是 0，这就是行最简形。非零行有 ${rank} 行，所以矩阵的秩 r(A) 等于 ${rank}。`,
   });
 
   return {

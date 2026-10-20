@@ -12,8 +12,31 @@ import { tryLocalSolve } from './localSolve';
  * 3) 发现不一致就标记出来；线性方程组这类可完全判定的题，直接用精确结果替换，绝不把错答案播出去。
  */
 
+/**
+ * 把 LaTeX 记号剥成可验算的纯文本：
+ * \frac{1}{2} → 1/2、\sqrt{16} → sqrt(16)、2^{3} → 2^(3)、x_{1} → x、
+ * \cdot/\times → *、\div → /，其余未知命令 → '?'（哨兵，含它的行直接跳过验算，
+ * 避免把 \pi、\Delta 误当成空串而造成"等式不成立"的误报）。
+ */
+function stripTex(s: string): string {
+  let t = String(s ?? '');
+  t = t.replace(/\\[dt]?c?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, (_m, a, b) => {
+    const simple = (x: string) => /^\s*-?[\d.]+\s*$/.test(x);
+    return simple(a) && simple(b) ? `${a.trim()}/${b.trim()}` : `(${a})/(${b})`;
+  });
+  t = t.replace(/\\[dt]?binom\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, (_m, a, b) => `(${a})/(${b})`);
+  t = t.replace(/\\sqrt\s*\{([^{}]*)\}/g, 'sqrt($1)');
+  t = t.replace(/\\sqrt\s*([0-9a-zA-Z]+)/g, 'sqrt($1)');
+  t = t.replace(/\\cdot|\\times/g, '*').replace(/\\div/g, '/');
+  t = t.replace(/\^\s*\{([^{}]*)\}/g, '^($1)');
+  t = t.replace(/_\s*\{([^{}]*)\}/g, '');
+  t = t.replace(/\\[a-zA-Z]+/g, '?');
+  t = t.replace(/[{}]/g, '');
+  return t;
+}
+
 function toNum(s: string): number | null {
-  const t = s
+  const t = stripTex(s)
     .replace(/[（]/g, '(')
     .replace(/[）]/g, ')')
     .replace(/[×·]/g, '*')
@@ -52,18 +75,21 @@ export function checkNumericEqualities(text: string): string[] {
   return issues;
 }
 
+/** 抽取文本里的数值（支持 a/b 与 \frac{a}{b}，按分数值参与比对） */
 function numbersIn(s: string): number[] {
-  return (s.match(/-?\d+(?:\.\d+)?/g) || []).map(Number).filter((n) => Number.isFinite(n));
+  const t = stripTex(s).replace(/\?/g, ' ');
+  return (t.match(/-?\d+(?:\.\d+)?(?:\s*\/\s*\d+(?:\.\d+)?)?/g) || [])
+    .map((x) => {
+      const f = x.split('/');
+      return f.length === 2 ? Number(f[0]) / Number(f[1]) : Number(x);
+    })
+    .filter((n) => Number.isFinite(n));
 }
 
 function containsAll(hay: string, needles: number[]): boolean {
   const pool = numbersIn(hay);
-  const fracs = (hay.match(/(-?\d+)\/(\d+)/g) || []).map((x) => x.split('/').map(Number));
-  const decimals = pool.map((m) => Number(m.toFixed(4)));
   return needles.every((n) =>
-    pool.some((m) => Math.abs(m - n) < 1e-6) ||
-    fracs.some(([a, b]) => b !== 0 && Math.abs(a / b - n) < 1e-6) ||
-    decimals.some((m) => Math.abs(m - n) < 1e-3),
+    pool.some((m) => Math.abs(m - n) < 1e-4 * Math.max(1, Math.abs(n))),
   );
 }
 

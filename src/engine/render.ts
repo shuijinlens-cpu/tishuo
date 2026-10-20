@@ -8,6 +8,7 @@ import {
   FONT_UI,
   compileExpr,
 } from '../lib/math';
+import { drawMathBlock, layoutMathLines, layoutMathExpr, looksLikeMath } from '../lib/mathLayout';
 import {
   THEMES,
   clamp01,
@@ -48,22 +49,65 @@ function roundRect(
   c.closePath();
 }
 
+/* ---------------- 数学标签（MathType 排版 + 纯文本兜底） ---------------- */
+
+function measureMathLabel(c: CanvasRenderingContext2D, text: string, size: number): { w: number; h: number } {
+  const m = layoutMathExpr(c, text, size, '#ffffff');
+  if (m) return { w: m.w, h: m.h + m.d };
+  c.font = `700 ${size}px ${FONT_UI}`;
+  return { w: c.measureText(text).width, h: size * 1.25 };
+}
+
+/** 画一个小数学标签；y 为文本顶部。返回占用宽度 */
+function drawMathLabel(
+  c: CanvasRenderingContext2D, text: string, x: number, yTop: number,
+  size: number, color: string, align: 'left' | 'center' | 'right' = 'left',
+): number {
+  const m = layoutMathExpr(c, text, size, color);
+  if (m) {
+    const lx = align === 'center' ? x - m.w / 2 : align === 'right' ? x - m.w : x;
+    m.draw(c, lx, yTop + m.h);
+    return m.w;
+  }
+  c.save();
+  c.font = `700 ${size}px ${FONT_UI}`;
+  c.fillStyle = color;
+  c.textAlign = 'left';
+  c.textBaseline = 'top';
+  const w = c.measureText(text).width;
+  const lx = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x;
+  c.fillText(text, lx, yTop);
+  c.restore();
+  return w;
+}
+
 function pill(
   c: CanvasRenderingContext2D,
   text: string, x: number, y: number, size: number,
   bg: string, fg: string, align: 'left' | 'right' | 'center' = 'left',
 ) {
-  c.font = `700 ${size}px ${FONT_UI}`;
-  const w = c.measureText(text).width + size * 1.5;
+  const useMath = looksLikeMath(text);
+  let tw: number;
+  if (useMath) tw = measureMathLabel(c, text, size).w;
+  else {
+    c.font = `700 ${size}px ${FONT_UI}`;
+    tw = c.measureText(text).width;
+  }
+  const w = tw + size * 1.5;
   const h = size * 2.1;
   const px = align === 'right' ? x - w : align === 'center' ? x - w / 2 : x;
   c.fillStyle = bg;
   roundRect(c, px, y, w, h, h / 2);
   c.fill();
-  c.fillStyle = fg;
-  c.textAlign = 'center';
-  c.textBaseline = 'middle';
-  c.fillText(text, px + w / 2, y + h / 2 + 1);
+  if (useMath) {
+    const m = layoutMathExpr(c, text, size, fg);
+    if (m) m.draw(c, px + w / 2 - m.w / 2, y + h / 2 + (m.h - m.d) / 2);
+  } else {
+    c.fillStyle = fg;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(text, px + w / 2, y + h / 2 + 1);
+  }
   return w;
 }
 
@@ -214,10 +258,15 @@ function drawTitle(
   c.save();
   c.globalAlpha = inA;
   c.translate(0, (1 - inA) * U * 0.05);
-  drawRich(c, scene.title || scene.math || ' ', {
-    x: W * 0.09, y: H * 0.4, maxW, size, color: th.text, accent: st.accent,
-    align: 'center', lineHeight: size * 1.28, weight: 800,
-  });
+  // 标题屏只有公式没有文字标题时，按 MathType 排版
+  if (!scene.title && scene.math && looksLikeMath(scene.math)) {
+    drawMathBlock(c, scene.math, { x: W * 0.09, y: H * 0.4, w: maxW, h: size * 1.6 }, { size, color: th.text, align: 'center' });
+  } else {
+    drawRich(c, scene.title || scene.math || ' ', {
+      x: W * 0.09, y: H * 0.4, maxW, size, color: th.text, accent: st.accent,
+      align: 'center', lineHeight: size * 1.28, weight: 800,
+    });
+  }
   c.restore();
 
   if (scene.subtitle) {
@@ -299,19 +348,35 @@ function drawSteps(
       x: tx, y: y + rowH * 0.08, maxW: tw, size: bodySize, color: th.text,
       accent: st.accent, weight: 600, lineHeight: bodySize * 1.35, maxLines: s.math ? 1 : 2,
     });
-    // 具体算式：这是"不许跳步"的落地——每一步都要能看到式子本身
+    // 具体算式：这是"不许跳步"的落地——每一步都要能看到式子本身（MathType 排版）
     if (s.math) {
-      const mSize = Math.min(mathSize, tw / Math.max(4, s.math.length) * 2.05);
-      drawMath(
+      const mStart = Math.min(mathSize, tw / Math.max(4, s.math.length) * 2.05);
+      const mathY = y + rowH * 0.08 + textH * 0.92;
+      const r = drawMathBlock(
         c, s.math,
-        { x: tx, y: y + rowH * 0.08 + textH * 0.92, w: tw },
-        mSize, st.accent,
+        { x: tx, y: mathY, w: tw, h: rowH * 0.46 },
+        { size: mStart, color: st.accent, align: 'left' },
       );
-      if (s.note) {
-        drawRich(c, s.note, {
-          x: tx, y: y + rowH * 0.08 + textH * 0.92 + mSize * 1.55, maxW: tw,
-          size: bodySize * 0.66, color: th.muted, weight: 400, maxLines: 1,
-        });
+      if (r) {
+        if (s.note) {
+          drawRich(c, s.note, {
+            x: tx, y: mathY + r.usedH + U * 0.008, maxW: tw,
+            size: bodySize * 0.66, color: th.muted, weight: 400, maxLines: 1,
+          });
+        }
+      } else {
+        // 排版失败（极端狭长空间）：退回纯文本，绝不留白
+        drawMath(
+          c, s.math,
+          { x: tx, y: mathY, w: tw },
+          mStart, st.accent,
+        );
+        if (s.note) {
+          drawRich(c, s.note, {
+            x: tx, y: mathY + mStart * 1.55, maxW: tw,
+            size: bodySize * 0.66, color: th.muted, weight: 400, maxLines: 1,
+          });
+        }
       }
     } else if (s.note) {
       drawRich(c, s.note, {
@@ -437,18 +502,34 @@ function drawMatrix(
       c.setLineDash([]);
     }
 
-    // 单元格
+    // 单元格（含分数/根号等按 MathType 排版，其余保持纯文本）
     const maxLen = Math.max(...f.rows.flat().map((s) => String(s).length), 1);
     const fs = Math.min(U * 0.058, cellH * 0.6, ((cellW * 0.92) / Math.max(1, maxLen)) * 1.7);
-    c.fillStyle = th.text;
-    c.font = `600 ${fs}px ${FONT_MATH}`;
     c.textAlign = 'center';
     c.textBaseline = 'middle';
     f.rows.forEach((row, ri) => {
       row.forEach((cell, ci) => {
-        const zero = String(cell) === '0';
-        c.fillStyle = zero ? withAlpha(th.text, 0.42) : th.text;
-        c.fillText(String(cell), x0 + ci * cellW + cellW / 2, my + ri * cellH + cellH / 2);
+        const txt = String(cell);
+        const zero = txt === '0';
+        const color = zero ? withAlpha(th.text, 0.42) : th.text;
+        const cx0 = x0 + ci * cellW + cellW / 2;
+        const cy0 = my + ri * cellH + cellH / 2;
+        if (/[\/\^_\\√]/.test(txt)) {
+          const m = layoutMathExpr(c, txt, fs, color);
+          if (m) {
+            const sc = Math.min(1, (cellW * 0.86) / Math.max(1, m.w), (cellH * 0.72) / Math.max(1, m.h + m.d));
+            c.save();
+            c.translate(cx0, cy0);
+            c.scale(sc, sc);
+            c.translate(-cx0, -cy0);
+            m.draw(c, cx0 - m.w / 2, cy0 + (m.h - m.d) / 2);
+            c.restore();
+            return;
+          }
+        }
+        c.fillStyle = color;
+        c.font = `600 ${fs}px ${FONT_MATH}`;
+        c.fillText(txt, cx0, cy0);
       });
     });
     c.restore();
@@ -489,12 +570,31 @@ function drawFormula(
   const mathLines = mathText ? mathText.split('\n') : [' '];
   const cardsH = (scene.note ? U * 0.17 : 0) + (scene.tip ? U * 0.1 : 0);
   const availH = box.y + box.h - top - cardsH - U * 0.06;
-  let size = fitMathSize(c, mathText.replace(/\n/g, ' '), box.w - U * 0.05, Math.min(U * 0.155, availH * 0.62), U * 0.04);
-  const lineH = size * 1.35;
-  // 保证多行公式连同卡片一起放得下
-  size = Math.min(size, (availH * 0.94) / (mathLines.length * 1.35 + 0.9));
-  const cardH = Math.min(availH, mathLines.length * size * 1.35 + size * 0.95);
-  const cy = top + Math.max(0, (availH - cardH) / 2);
+
+  // MathType 排版：先按理想字号排，超宽/超高就逐级缩小
+  let size = Math.min(U * 0.155, availH * 0.62);
+  let block: ReturnType<typeof layoutMathLines> = null;
+  const minSize = U * 0.038;
+  for (;;) {
+    block = layoutMathLines(c, mathText, size, th.text);
+    if (block && block.width <= box.w - U * 0.07 && block.height <= availH * 0.92) break;
+    if (size <= minSize) { block = null; break; }
+    size = Math.max(minSize, size * 0.93);
+  }
+
+  // 排版失败时退回旧纯文本路径的尺寸
+  let drawSize = size;
+  let cardH: number;
+  let cy: number;
+  if (!block) {
+    drawSize = fitMathSize(c, mathText.replace(/\n/g, ' '), box.w - U * 0.05, Math.min(U * 0.155, availH * 0.62), U * 0.04);
+    drawSize = Math.min(drawSize, (availH * 0.94) / (mathLines.length * 1.35 + 0.9));
+    cardH = Math.min(availH, mathLines.length * drawSize * 1.35 + drawSize * 0.95);
+  } else {
+    cardH = Math.min(availH, block.height + size * 0.95);
+  }
+  cy = top + Math.max(0, (availH - cardH) / 2);
+
   const a = easeOut(seg(t, 0.05, 0.6));
   c.save();
   c.globalAlpha = a;
@@ -504,7 +604,6 @@ function drawFormula(
   c.strokeStyle = withAlpha(st.accent, 0.35);
   c.lineWidth = 1.5;
   c.stroke();
-
   // 呼吸光
   const pulse = 0.5 + 0.5 * Math.sin(t * 2);
   c.fillStyle = withAlpha(st.accent, 0.07 + 0.05 * pulse);
@@ -515,12 +614,20 @@ function drawFormula(
   c.save();
   c.globalAlpha = a;
   c.translate(0, (1 - a) * U * 0.03);
-  const innerH = mathLines.length * size * 1.35;
-  drawMath(
-    c, mathText,
-    { x: box.x + U * 0.03, y: cy + Math.max(size * 0.3, (cardH - innerH) / 2), w: box.w - U * 0.06 },
-    size, th.text,
-  );
+  if (block) {
+    let ly = cy + Math.max(size * 0.3, (cardH - block.height) / 2) + block.lines[0].h;
+    for (const ln of block.lines) {
+      ln.draw(c, box.x + U * 0.035 + (box.w - U * 0.07 - ln.w) / 2, ly);
+      ly += ln.h + ln.d + size * 0.34;
+    }
+  } else {
+    const innerH = mathLines.length * drawSize * 1.35;
+    drawMath(
+      c, mathText,
+      { x: box.x + U * 0.03, y: cy + Math.max(drawSize * 0.3, (cardH - innerH) / 2), w: box.w - U * 0.06 },
+      drawSize, th.text,
+    );
+  }
   c.restore();
 
   // 下划线生长
@@ -717,19 +824,16 @@ function drawGraph(
       for (let k = idx; k >= 0; k--) if (Number.isFinite(pts[k].y)) { lp = pts[k]; break; }
       if (lp && drawFrac > 0.5) {
         const a = easeOut(seg(t, 0.5, 0.9));
+        const fs = Math.max(12, U * 0.024);
+        const tw = measureMathLabel(c, cv.label, fs).w;
         c.save();
         c.globalAlpha = a;
-        c.font = `700 ${Math.max(12, U * 0.024)}px ${FONT_UI}`;
-        const tw = c.measureText(cv.label).width;
         const lx = Math.min(GX(lp.x) + 10, plotX + plotW - tw - 6);
         const ly = Math.max(plotY + 4, GY(lp.y) - U * 0.03);
         c.fillStyle = withAlpha(th.bg, 0.75);
         roundRect(c, lx - 5, ly - 2, tw + 10, U * 0.032, 6);
         c.fill();
-        c.fillStyle = color;
-        c.textAlign = 'left';
-        c.textBaseline = 'top';
-        c.fillText(cv.label, lx, ly);
+        drawMathLabel(c, cv.label, lx, ly, fs, color);
         c.restore();
       }
     }
@@ -803,17 +907,13 @@ function drawGraph(
     c.stroke();
     if (pt.label) {
       const fs = Math.max(12, U * 0.026);
-      c.font = `700 ${fs}px ${FONT_MATH}`;
-      const tw = c.measureText(pt.label).width;
+      const tw = measureMathLabel(c, pt.label!, fs).w;
       const lx = Math.min(px + r + 8, plotX + plotW - tw - 12);
       const ly = py - r - fs * 1.9;
       c.fillStyle = withAlpha(th.bg, 0.82);
       roundRect(c, lx - 7, ly - 4, tw + 14, fs * 1.5, 7);
       c.fill();
-      c.fillStyle = color;
-      c.textAlign = 'left';
-      c.textBaseline = 'top';
-      c.fillText(pt.label, lx, ly);
+      drawMathLabel(c, pt.label!, lx, ly, fs, color);
     }
     c.restore();
   });
@@ -1397,7 +1497,14 @@ function drawConclusion(
 
   if (scene.math) {
     const size = Math.min(U * 0.14, box.w * 0.16);
-    drawMath(c, scene.math, { x: box.x + U * 0.04, y: cy - U * 0.02, w: box.w - U * 0.08 }, size, st.accent);
+    const r = drawMathBlock(
+      c, scene.math,
+      { x: box.x + U * 0.04, y: cy - U * 0.06, w: box.w - U * 0.08, h: U * 0.15 },
+      { size, color: st.accent, align: 'center' },
+    );
+    if (!r) {
+      drawMath(c, scene.math, { x: box.x + U * 0.04, y: cy - U * 0.02, w: box.w - U * 0.08 }, size, st.accent);
+    }
   }
   if (scene.subtitle || scene.tip) {
     drawRich(c, scene.subtitle || scene.tip || '', {

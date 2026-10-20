@@ -422,13 +422,13 @@ export const SAMPLES: Sample[] = [
         {
           type: 'formula',
           title: '证明的关键：面积夹逼',
-          math: 'sin x  <  x  <  tan x    (0 < x < π/2)',
+          math: '\\sin x < x < \\tan x \\quad (0 < x < \\frac{\\pi}{2})',
           note: '单位圆中：小三角形面积 < 扇形面积 < 大三角形面积',
           narration: '在单位圆里比较三块面积：小三角形、扇形、大三角形。中间那块扇形的面积是 x 的一半，两边一夹，就得到这个不等式。',
         },
         {
           type: 'formula',
-          math: 'cos x  <  sin x / x  <  1',
+          math: '\\cos x < \\frac{\\sin x}{x} < 1',
           note: '同除 sin x 后取倒数；x → 0⁺ 时 cos x → 1',
           tip: '由夹逼定理，两端都趋于 1，中间只能趋于 1',
           narration: '三边同时除以 sin x，再取倒数，就得到 cos x 小于 sin x 比 x 小于一。当 x 趋于零，cos x 趋于一，两端都趋于一，中间被夹住，只能趋于一。',
@@ -436,7 +436,7 @@ export const SAMPLES: Sample[] = [
         {
           type: 'conclusion',
           title: '结论',
-          math: 'lim(x→0) sin x / x = 1',
+          math: '\\lim_{x \\to 0} \\frac{\\sin x}{x} = 1',
           subtitle: '前提：x 用弧度制，且 x ≠ 0',
           narration: '所以极限等于一。注意两个前提：必须用弧度制，而且 x 本身不能等于零。',
         },
@@ -489,7 +489,7 @@ export const SAMPLES: Sample[] = [
         },
         {
           type: 'formula',
-          math: '∫₀¹ x² dx = [ x³/3 ]₀¹\n= 1/3 − 0 = 1/3',
+          math: '\\int_{0}^{1} x^{2} \\, dx = \\left[ \\frac{x^{3}}{3} \\right]_{0}^{1}\n= \\frac{1}{3} - 0 = \\frac{1}{3}',
           note: '结果为正，与"面积"的几何意义一致。',
           tip: '若曲线在 x 轴下方，积分值为负，但面积要取绝对值',
           narration: '所以积分值等于三分之一。结果是正的，和面积的意义对得上。',
@@ -497,7 +497,7 @@ export const SAMPLES: Sample[] = [
         {
           type: 'conclusion',
           title: '结论',
-          math: '∫₀¹ x² dx = 1/3',
+          math: '\\int_{0}^{1} x^{2} \\, dx = \\frac{1}{3}',
           subtitle: '先找原函数，再代上下限；上下限的顺序决定正负',
           narration: '答案三分之一。记住：定积分是数，不定积分是函数族，别混。',
         },
