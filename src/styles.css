@@ -158,10 +158,12 @@ main { flex: 1; width: 100%; max-width: 1360px; margin: 0 auto; padding: 26px 28
 /* 分段控件 */
 .seg {
   display: inline-flex; padding: 3px; background: #f2f4fa; border-radius: 10px; gap: 2px;
+  max-width: 100%; flex-wrap: wrap;
 }
 .seg button {
   border: 0; background: transparent; padding: 6px 11px; border-radius: 8px;
   font-size: 12.5px; color: var(--ink2); cursor: pointer; font-family: var(--font); font-weight: 600;
+  min-width: 0;
 }
 .seg button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(16, 24, 40, 0.12); }
 .mode-seg { display: flex; width: 100%; }
@@ -297,20 +299,40 @@ main { flex: 1; width: 100%; max-width: 1360px; margin: 0 auto; padding: 26px 28
 
 /* ---------------- 弹窗 ---------------- */
 .modal-mask {
-  position: fixed; inset: 0; background: rgba(16, 24, 40, 0.42); backdrop-filter: blur(4px);
-  display: grid; place-items: center; z-index: 60; padding: 20px;
+  position: fixed; left: 0; right: 0; top: 0; height: 100vh; height: 100dvh;
+  background: rgba(16, 24, 40, 0.42); backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 60; padding: 20px; overflow: hidden;
 }
+/* 打开弹窗时锁住背后页面，避免手机上内容跑偏 */
+body:has(.modal-mask) { overflow: hidden; }
 .modal {
-  background: #fff; border-radius: 20px; width: min(680px, 100%);
-  max-height: 88vh; display: flex; flex-direction: column;
+  background: #fff; border-radius: 20px;
+  width: min(680px, 100%); max-width: 100%; min-width: 0;
+  max-height: 88%; display: flex; flex-direction: column;
+  overflow: hidden; /* 圆角裁剪，子元素永不画出屏幕 */
   box-shadow: 0 30px 80px -30px rgba(16, 24, 40, 0.5);
   animation: pop 0.18s ease;
 }
 @keyframes pop { from { transform: translateY(8px) scale(0.99); opacity: 0; } to { transform: none; opacity: 1; } }
-.modal-head { display: flex; align-items: flex-start; justify-content: space-between; padding: 20px 22px 10px; }
+.modal-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+  padding: 20px 22px 10px; flex: 0 0 auto; min-width: 0;
+}
 .modal-head h2 { margin: 0 0 4px; font-size: 18px; }
-.modal-body { padding: 6px 22px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
-.modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 22px; border-top: 1px solid var(--line); }
+.modal-head .sub { min-width: 0; }
+.modal-body {
+  padding: 6px 22px 16px; overflow-y: auto; overflow-x: hidden;
+  display: flex; flex-direction: column; gap: 18px;
+  flex: 1 1 auto; min-height: 0; min-width: 0;
+  -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+}
+.modal-body > section { min-width: 0; }
+.modal-foot {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  padding: 14px 22px; border-top: 1px solid var(--line);
+  flex: 0 0 auto; min-width: 0; background: #fff;
+}
 
 .field { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--ink2); font-weight: 600; }
 .field input, .field select {
@@ -319,8 +341,8 @@ main { flex: 1; width: 100%; max-width: 1360px; margin: 0 auto; padding: 26px 28
 }
 .field input:focus, .field select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.row { display: flex; align-items: center; }
-.row.between { justify-content: space-between; }
+.row { display: flex; align-items: center; min-width: 0; }
+.row.between { justify-content: space-between; flex-wrap: wrap; gap: 6px 10px; }
 .row.gap8 { gap: 8px; }
 .row.center { justify-content: center; }
 .label { font-size: 12.5px; font-weight: 600; color: var(--ink2); }
@@ -466,6 +488,36 @@ main { flex: 1; width: 100%; max-width: 1360px; margin: 0 auto; padding: 26px 28
 }
 
 /* ---------------- 手机窄屏 ---------------- */
+@media (max-width: 640px) {
+  /* 弹窗改底部抽屉：全宽、贴底、四周留出安全区，"完成"按钮永远在屏幕内 */
+  .modal-mask { padding: 0; align-items: flex-end; }
+  .modal {
+    width: 100%; max-width: 100%; max-height: 92%; max-height: 92dvh;
+    border-radius: 18px 18px 0 0;
+    animation: sheetUp 0.22s ease;
+  }
+  @keyframes sheetUp { from { transform: translateY(40px); opacity: 0.5; } to { transform: none; opacity: 1; } }
+  .modal-head { padding: 16px 16px 8px; }
+  .modal-head h2 { font-size: 17px; }
+  .modal-head .sub { font-size: 11.5px; line-height: 1.5; }
+  .modal-body { padding: 4px 16px 16px; gap: 16px; }
+  .modal-foot {
+    justify-content: space-between;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    box-shadow: 0 -6px 18px -12px rgba(16, 24, 40, 0.35);
+  }
+  .modal-foot .tiny { flex: 1 1 auto; min-width: 0; }
+  .modal-foot .btn {
+    flex: 0 0 auto; min-height: 44px; padding: 0 24px;
+    font-size: 14.5px; border-radius: 12px;
+  }
+  /* 分段控件独占一行、按钮平分，不再把弹窗撑宽 */
+  .row.between > .seg { width: 100%; }
+  .row.between > .seg button { flex: 1 1 0; padding: 7px 6px; font-size: 12px; text-align: center; }
+  .grid2 { grid-template-columns: 1fr; gap: 10px; }
+  .modal .row.between > .btn { flex: 0 0 auto; }
+}
+
 @media (max-width: 520px) {
   .top { padding: 10px 14px; gap: 8px; }
   .brand p { display: none; }
@@ -485,3 +537,9 @@ main { flex: 1; width: 100%; max-width: 1360px; margin: 0 auto; padding: 26px 28
 .btn.danger:hover { background: #d63b40; }
 .voice-card.my-voice { flex-direction: column; align-items: stretch; gap: 4px; }
 .voice-card.my-voice small { margin-top: 2px; }
+.voice-card.my-voice strong, .voice-card.my-voice small { display: block; }
+/* 换行后独占一行的按钮贴右，和 label 形成自然的"标题—操作"关系 */
+.modal .row.between > .btn { margin-left: auto; }
+/* 弹窗滚动条在手机上不占宽度 */
+.modal-body::-webkit-scrollbar { width: 0; height: 0; }
+.modal-body { scrollbar-width: none; }
