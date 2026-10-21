@@ -189,6 +189,8 @@ export interface VoiceProfile {
 
 export interface Settings {
   providerId: string;
+  /** 视频内核地址（HuggingFace Space / 自有服务器）。填了即"服务端模式"，手机不再本地渲染 */
+  apiBase: string;
   baseUrl: string;
   apiKey: string;
   textModel: string;

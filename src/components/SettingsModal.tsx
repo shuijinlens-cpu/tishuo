@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { PROVIDERS, isConfigured, chat, detectProvider } from '../lib/ai';
-import { VOICE_PRESETS, analyzeRecording, cloudTts, describeBestVoice, pickVoice, previewVoice, waitForVoices } from '../lib/voice';
+import { VOICE_PRESETS, analyzeRecording, cloudTts, describeBestVoice, pickVoice, previewVoice as localPreviewVoice, waitForVoices } from '../lib/voice';
+import { previewVoice } from '../lib/backend';
 import { applyPreset } from '../lib/store';
 import { getAudioContext } from '../engine/player';
 import type { Settings, VoiceProfile } from '../lib/types';
@@ -89,6 +90,24 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
     const vp = VOICE_PRESETS.find((x) => x.id === id)!;
     set({ voicePreset: id, useMyVoice: false });
     setTrying(id);
+    // 服务端模式：直接让视频内核合成试听，手机端必定出声（最稳，不受设备缺中文 TTS 影响）
+    if (s.apiBase?.trim()) {
+      try {
+        setVoiceNote(`正在用「${vp.name}」试听（服务端配音）…`);
+        const buf = await previewVoice(
+          s.apiBase.trim(),
+          '同学们好，今天我们来看这道题。这就是讲解时的人声效果，注意听——疑问句语调会上扬，重点的地方我会说得慢一点、重一点。',
+          id,
+        );
+        const url = URL.createObjectURL(new Blob([buf], { type: 'audio/mpeg' }));
+        const el = new Audio(url);
+        el.play().catch(() => {});
+        setTimeout(() => setTrying(''), 6000);
+        return;
+      } catch (e: any) {
+        setVoiceNote(`服务端试听失败：${e?.message || e}，已回退本机/云端试听。`);
+      }
+    }
     await waitForVoices();
     // 优先用云端人声试听：手机上一定有声音，且最接近导出视频的效果
     if (s.ttsEngine === 'api' && s.ttsModel) {
@@ -110,7 +129,7 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
       return;
     }
     setVoiceNote(`正在用「${describeBestVoice(vp)}」试听`);
-    await previewVoice(vp, s.speed, s.pitchShift, s.prosody);
+    await localPreviewVoice(vp, s.speed, s.pitchShift, s.prosody);
     setTimeout(() => setTrying(''), 9000);
   };
 
@@ -138,7 +157,7 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
             `音域 ${profile.f0Low}~${profile.f0High} Hz，自动匹配「${VOICE_PRESETS.find((v) => v.id === profile.presetId)?.name}」并校准音高 ${profile.pitchScale.toFixed(2)}×`,
           );
           await waitForVoices();
-          await previewVoice(VOICE_PRESETS.find((v) => v.id === profile.presetId)!, s.speed, profile.pitchScale, s.prosody);
+          await localPreviewVoice(VOICE_PRESETS.find((v) => v.id === profile.presetId)!, s.speed, profile.pitchScale, s.prosody);
         } catch (e: any) {
           setRecErr(e?.message || '分析失败，请重试');
         } finally {
@@ -178,6 +197,30 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
         </div>
 
         <div className="modal-body">
+          {/* ---------- 服务端视频内核 ---------- */}
+          <section className="server-mode">
+            <div className="row between">
+              <span className="label">视频内核地址（服务端模式）</span>
+              {s.apiBase?.trim() ? (
+                <span className="badge ok">已启用</span>
+              ) : (
+                <span className="badge">未启用</span>
+              )}
+            </div>
+            <label className="field mt8">
+              <span>把题说视频内核地址填进来（例如 https://tishuo-video.hf.space）</span>
+              <input
+                value={s.apiBase}
+                placeholder="https://你的视频内核地址"
+                onChange={(e) => set({ apiBase: e.target.value.trim() })}
+              />
+            </label>
+            <p className="hint">
+              填了之后，解题 / 动画 / 配音全部在服务器端完成，<b>手机不再卡顿，也不用再选大模型、填 Key</b>。
+              没填则使用本机模式（需自行配置大模型 Key）。内核地址怎么获取，见仓库 README 的「部署视频内核」。
+            </p>
+          </section>
+
           {/* ---------- 声音 ---------- */}
           <section>
             <div className="row between">
@@ -400,7 +443,7 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
                 🔍 按 Key 自动识别服务商
               </button>
             )}
-            {s.providerId !== 'demo' && !s.apiKey && (
+            {s.providerId !== 'demo' && !s.apiKey && !s.apiBase?.trim() && (
               <p className="hint" style={{ color: '#c0392b', background: '#fff4f2', padding: '8px 10px', borderRadius: 8, fontWeight: 600 }}>
                 ⚠ 还差最后一步：填好上方「API Key」才能真正启用 AI 解题。只选服务商、不填 Key，生成题目时会提示「需要模型」。
               </p>
@@ -413,7 +456,7 @@ export function SettingsModal({ settings, onChange, onClose }: Props) {
             )}
           </section>
 
-          {s.providerId === 'demo' && (
+          {s.providerId === 'demo' && !s.apiBase?.trim() && (
             <section className="free-guide">
               <strong>想解锁任意题目的 AI 讲解？3 分钟免费开通</strong>
               <ol>

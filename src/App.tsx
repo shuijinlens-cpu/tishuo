@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { STAGES, stageMeta } from './engine/theme';
 import { VideoStage } from './components/VideoStage';
 import { StoryboardList } from './components/StoryboardList';
+import { RemoteVideo } from './components/RemoteVideo';
 import { SettingsModal } from './components/SettingsModal';
 import { Uploader } from './components/Uploader';
 import { OcrConfirm } from './components/OcrConfirm';
@@ -13,6 +14,7 @@ import { tryLocalSolve } from './lib/localSolve';
 import { getAudioContext } from './engine/player';
 import { autoConfigFromKey, loadSettings, saveSettings } from './lib/store';
 import { SAMPLES, samplesFor, type Sample } from './lib/samples';
+import { submitProblem, getJob, videoUrl } from './lib/backend';
 import type { Settings, Stage, Storyboard } from './lib/types';
 
 type Mode = 'solve' | 'custom';
@@ -32,8 +34,10 @@ export default function App() {
   const [synthesizing, setSynthesizing] = useState(false);
   const [ocrResult, setOcrResult] = useState<OcrResult | null>(null);
   const [ocrPct, setOcrPct] = useState<{ pct: number; label: string } | null>(null);
+  const [serverVideoUrl, setServerVideoUrl] = useState<string | null>(null);
 
   const live = isConfigured(settings);
+  const serverMode = !!settings.apiBase?.trim();
   const st = stageMeta(stage);
   const providerName = PROVIDERS.find((p) => p.id === settings.providerId)?.name || '自定义';
   const activeModel = settings.textModel || settings.visionModel || '';
@@ -114,11 +118,8 @@ export default function App() {
     return local ? { ...local, question: q, stage } : null;
   };
 
-  const handleGenerate = async () => {
-    const q = question.trim();
-    if (mode === 'solve' && !q) { setToast('先输入题目，或上传图片后识别'); return; }
-    if (mode === 'custom' && !plan.trim()) { setToast('写下你的讲解思路，我按顺序生成'); return; }
-
+  /** 本机兜底流程（服务端不可用时的降级） */
+  const localFlow = async (q: string) => {
     setBusy(mode === 'custom' ? '正在按你的思路编排分镜…' : '正在解题并设计分镜…');
     try {
       const sb = await buildStoryboard(q);
@@ -136,6 +137,63 @@ export default function App() {
     } finally {
       setBusy('');
     }
+  };
+
+  /** 服务端模式：把题目发给视频内核，轮询进度，拿到 MP4 直接播放 */
+  const serverFlow = async (q: string) => {
+    const base = settings.apiBase.trim();
+    setBusy('正在把题目发给视频内核…');
+    let jobId: string;
+    try {
+      jobId = await submitProblem(base, q, stage, settings.voicePreset);
+    } catch (e: any) {
+      setToast(`服务端连接失败：${e?.message || e}。已切回本机模式生成。`);
+      return localFlow(q);
+    }
+    const deadline = Date.now() + 1000 * 60 * 6; // 最多等 6 分钟
+    try {
+      while (true) {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (Date.now() > deadline) {
+          setToast('服务端生成超时（>6 分钟）。已切回本机模式。');
+          return localFlow(q);
+        }
+        let d;
+        try {
+          d = await getJob(base, jobId);
+        } catch {
+          continue; // 网络抖动，下一轮再试
+        }
+        setBusy(`${d.step || '生成中'} ${Math.round((d.progress || 0) * 100)}%`);
+        if (d.status === 'done' && d.video) {
+          setStoryboard(null);
+          setBuffers(null);
+          setOcrResult(null);
+          setServerVideoUrl(videoUrl(base, jobId));
+          setToast('✅ 视频已生成（服务端渲染，带配音）');
+          return;
+        }
+        if (d.status === 'error') {
+          setToast(`服务端生成失败：${d.error || '未知错误'}。已切回本机模式。`);
+          return localFlow(q);
+        }
+      }
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const handleGenerate = async () => {
+    const q = question.trim();
+    if (mode === 'solve' && !q) { setToast('先输入题目，或上传图片后识别'); return; }
+    if (mode === 'custom' && !plan.trim()) { setToast('写下你的讲解思路，我按顺序生成'); return; }
+
+    setServerVideoUrl(null);
+    if (serverMode) {
+      await serverFlow(q);
+      return;
+    }
+    await localFlow(q);
   };
 
   const handleSynthesize = async () => {
@@ -207,7 +265,11 @@ export default function App() {
           </div>
         </div>
         <div className="top-actions">
-          {live ? (
+          {serverMode ? (
+            <span className="mode-pill live" title="解题 / 动画 / 配音都在服务器端完成，手机不再卡顿">
+              🛰 服务端模式
+            </span>
+          ) : live ? (
             <span className="mode-pill live" title={`解题：${settings.textModel || '-'}｜识题：${settings.visionModel || '-'}`}>
               {providerName}{activeModel ? ` · ${activeModel}` : ''}
             </span>
@@ -329,7 +391,7 @@ export default function App() {
               </button>
             )}
 
-            {!live && (
+            {!live && !serverMode && (
               <div className="free-tip">
                 <strong>{settings.apiKey ? 'Key 已记住，还差一步' : '这套流程现在就能跑'}</strong>
                 <p>
@@ -360,31 +422,42 @@ export default function App() {
           </aside>
 
           <section className="preview">
-            <VideoStage
-              storyboard={storyboard}
-              settings={settings}
-              buffers={buffers}
-              synthesizing={synthesizing}
-              onSynthesize={handleSynthesize}
-            />
-
-            {storyboard ? (
-              <StoryboardList
-                storyboard={storyboard}
-                onChange={handleSbChange}
-                onRegenerate={regenerate}
+            {serverVideoUrl ? (
+              <RemoteVideo
+                url={serverVideoUrl}
+                topic={question.slice(0, 12) || '讲解'}
+                onRegen={regenerate}
                 regenerating={!!busy}
               />
             ) : (
-              <div className="empty-hint">
-                <h3>还没有讲解</h3>
-                <p>左边拍一张题目，或者点一个示例，30 秒就能看到一条成片。</p>
-                <div className="chips">
-                  {SAMPLES.slice(0, 3).map((s) => (
-                    <button key={s.id} className="chip" onClick={() => pickSample(s)}>{s.label}</button>
-                  ))}
-                </div>
-              </div>
+              <>
+                <VideoStage
+                  storyboard={storyboard}
+                  settings={settings}
+                  buffers={buffers}
+                  synthesizing={synthesizing}
+                  onSynthesize={handleSynthesize}
+                />
+
+                {storyboard ? (
+                  <StoryboardList
+                    storyboard={storyboard}
+                    onChange={handleSbChange}
+                    onRegenerate={regenerate}
+                    regenerating={!!busy}
+                  />
+                ) : (
+                  <div className="empty-hint">
+                    <h3>还没有讲解</h3>
+                    <p>左边拍一张题目，或者点一个示例，30 秒就能看到一条成片。</p>
+                    <div className="chips">
+                      {SAMPLES.slice(0, 3).map((s) => (
+                        <button key={s.id} className="chip" onClick={() => pickSample(s)}>{s.label}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </section>
         </div>

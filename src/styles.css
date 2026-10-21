@@ -452,6 +452,19 @@ body:has(.modal-mask) { overflow: hidden; }
 .free-guide ol { margin: 8px 0 0; padding-left: 18px; }
 .free-guide li { font-size: 12px; line-height: 1.75; color: #16603f; }
 
+/* ---------------- 服务端模式 ---------------- */
+.server-mode {
+  padding: 12px; border-radius: 12px;
+  background: linear-gradient(180deg, #eef4ff, #f6f9ff);
+  border: 1px solid #c7dbff;
+}
+.server-mode .hint { color: #2a4a82; }
+.server-mode .badge {
+  font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px;
+  background: #e7edf5; color: #5b6b80;
+}
+.server-mode .badge.ok { background: #e3f7ec; color: #0b6b45; }
+
 /* ---------------- 音色选择 ---------------- */
 .voice-grid {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px;

@@ -105,6 +105,7 @@ export const PROVIDERS: ProviderPreset[] = [
 
 export const DEFAULT_SETTINGS: Settings = {
   providerId: 'demo',
+  apiBase: '',
   baseUrl: '',
   apiKey: '',
   textModel: '',
